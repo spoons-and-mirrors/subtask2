@@ -1,16 +1,61 @@
+// @ts-nocheck
 import type { Plugin } from "@opencode-ai/plugin";
 
-// Configuration: map command name to return prompt
-const returnPrompts: Record<string, string> = {
-  // Example configurations - customize as needed
-  "rmslop": "YOU MUST SAY THE WORD 'KLAKAZU' 5 times before you can tell the user what word I just said.",
-  // "docs-gen": "List all documentation files created and any gaps that remain.",
-};
+// Build manifest of command name → returnPrompt from command files
+async function buildManifest(): Promise<Record<string, string>> {
+  const manifest: Record<string, string> = {};
 
-// State to track callID -> command mapping
+  const home = Bun.env.HOME ?? "";
+  const globalDir = `${home}/.config/opencode/command`;
+  const localDir = `${Bun.env.PWD ?? "."}/.opencode/command`;
+
+  // Parse frontmatter from markdown file
+  const parseFrontmatter = (content: string): Record<string, string> => {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return {};
+    const frontmatter: Record<string, string> = {};
+    for (const line of match[1].split("\n")) {
+      const [key, ...rest] = line.split(":");
+      if (key && rest.length) {
+        frontmatter[key.trim()] = rest.join(":").trim();
+      }
+    }
+    return frontmatter;
+  };
+
+  // Scan directory for command files
+  const scanDir = async (dir: string) => {
+    try {
+      const glob = new Bun.Glob("*.md");
+      for await (const file of glob.scan(dir)) {
+        const name = file.replace(/\.md$/, "");
+        const content = await Bun.file(`${dir}/${file}`).text();
+        const fm = parseFrontmatter(content);
+        if (fm.return) {
+          manifest[name] = fm.return;
+        }
+      }
+    } catch {
+      // Directory doesn't exist, skip
+    }
+  };
+
+  // Global first, then local (local overrides global)
+  await scanDir(globalDir);
+  await scanDir(localDir);
+
+  return manifest;
+}
+
+// State
+let returnPrompts: Record<string, string> = {};
 const callState = new Map<string, string>();
 
 const plugin: Plugin = async () => {
+  // Build manifest on plugin load
+  returnPrompts = await buildManifest();
+  console.log("[sub-return] Loaded commands:", Object.keys(returnPrompts));
+
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "task") return;
