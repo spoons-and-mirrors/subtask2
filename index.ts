@@ -1,79 +1,110 @@
 // @ts-nocheck
 import type { Plugin } from "@opencode-ai/plugin";
 
-// Build manifest of command name → returnPrompt from command files
-async function buildManifest(): Promise<Record<string, string>> {
-  const manifest: Record<string, string> = {};
+interface CommandConfig {
+  return?: string;
+  chain: string[];
+}
 
-  const home = Bun.env.HOME ?? "";
-  const globalDir = `${home}/.config/opencode/command`;
-  const localDir = `${Bun.env.PWD ?? "."}/.opencode/command`;
-
-  // Parse frontmatter from markdown file
-  const parseFrontmatter = (content: string): Record<string, string> => {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!match) return {};
-    const frontmatter: Record<string, string> = {};
-    for (const line of match[1].split("\n")) {
-      const [key, ...rest] = line.split(":");
-      if (key && rest.length) {
-        frontmatter[key.trim()] = rest.join(":").trim();
+// Parse frontmatter, handling YAML array syntax for chain
+function parseFrontmatter(content: string): Record<string, string | string[]> {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+  const fm: Record<string, string | string[]> = {};
+  const lines = match[1].split("\n");
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const keyMatch = line.match(/^(\w+):\s*(.*)/);
+    if (!keyMatch) continue;
+    
+    const [, key, value] = keyMatch;
+    
+    // Check if next lines are YAML array items (- value)
+    if (!value.trim()) {
+      const items: string[] = [];
+      while (i + 1 < lines.length && lines[i + 1].match(/^\s+-\s+/)) {
+        i++;
+        items.push(lines[i].replace(/^\s+-\s+/, "").trim());
+      }
+      if (items.length) {
+        fm[key] = items;
+        continue;
       }
     }
-    return frontmatter;
-  };
+    
+    fm[key] = value.trim();
+  }
+  return fm;
+}
 
-  // Scan directory for command files
-  const scanDir = async (dir: string) => {
+async function buildManifest(): Promise<Record<string, CommandConfig>> {
+  const manifest: Record<string, CommandConfig> = {};
+  const home = Bun.env.HOME ?? "";
+  const dirs = [`${home}/.config/opencode/command`, `${Bun.env.PWD ?? "."}/.opencode/command`];
+
+  for (const dir of dirs) {
     try {
       const glob = new Bun.Glob("*.md");
       for await (const file of glob.scan(dir)) {
         const name = file.replace(/\.md$/, "");
         const content = await Bun.file(`${dir}/${file}`).text();
         const fm = parseFrontmatter(content);
-        if (fm.return) {
-          manifest[name] = fm.return;
+        const chain = fm.chain;
+        const chainArr = chain ? (Array.isArray(chain) ? chain : [chain]) : [];
+        if (fm.return || chainArr.length) {
+          manifest[name] = {
+            return: fm.return as string | undefined,
+            chain: chainArr,
+          };
         }
       }
-    } catch {
-      // Directory doesn't exist, skip
-    }
-  };
-
-  // Global first, then local (local overrides global)
-  await scanDir(globalDir);
-  await scanDir(localDir);
-
+    } catch {}
+  }
   return manifest;
 }
 
-// State
-let returnPrompts: Record<string, string> = {};
+let configs: Record<string, CommandConfig> = {};
+let client: any = null;
 const callState = new Map<string, string>();
+const chainState = new Map<string, string[]>(); // sessionID -> remaining chain prompts
 
-const plugin: Plugin = async () => {
-  // Build manifest on plugin load
-  returnPrompts = await buildManifest();
-  console.log("[sub-return] Loaded commands:", Object.keys(returnPrompts));
+const plugin: Plugin = async (ctx) => {
+  configs = await buildManifest();
+  client = ctx.client;
+  console.log("[sub-return] Loaded:", Object.keys(configs));
 
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "task") return;
-      const command = output.args?.command;
-      if (command && returnPrompts[command]) {
-        callState.set(input.callID, command);
+      const cmd = output.args?.command;
+      if (cmd && configs[cmd]) {
+        callState.set(input.callID, cmd);
+        if (configs[cmd].chain.length) {
+          chainState.set(input.sessionID, [...configs[cmd].chain]);
+        }
       }
     },
 
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "task") return;
-      const command = callState.get(input.callID);
-      if (!command) return;
-      const returnPrompt = returnPrompts[command];
-      if (returnPrompt) {
-        output.output += `\n\n${returnPrompt}`;
+      const cmd = callState.get(input.callID);
+      if (!cmd) return;
+      if (configs[cmd]?.return) {
+        output.output += `\n\n${configs[cmd].return}`;
       }
       callState.delete(input.callID);
+    },
+
+    "experimental.text.complete": async (input) => {
+      const chain = chainState.get(input.sessionID);
+      if (!chain?.length || !client) return;
+      const next = chain.shift()!;
+      if (!chain.length) chainState.delete(input.sessionID);
+      await client.session.promptAsync({
+        path: { id: input.sessionID },
+        body: { parts: [{ type: "text", text: next }] },
+      });
     },
   };
 };
