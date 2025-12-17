@@ -17,12 +17,6 @@ Add to your `opencode.json`:
 }
 ```
 
-or 
-
-```bash
-npm install @openspoon/subtask2
-```
-
 ## Usage
 
 Add `return` and/or `chain` to your command frontmatter:
@@ -33,7 +27,7 @@ Add `return` and/or `chain` to your command frontmatter:
 
 ```markdown
 ---
-description: Review code changes and create summary
+description: subtask2 return and chain prompt example
 agent: general
 subtask: true
 return: You are the agent in charge of assessing the bug review, challenge, verify and validate it, then discard it or implement it.
@@ -47,10 +41,9 @@ Review PR#355 for bugs, security issues, and code style problems.
 
 ## How It Works
 
-1. When a subtask command with `return` executes, the return text is appended to the task output
-2. When the subtask completes, each `chain` prompt is sent as a synthetic user message
-3. Chain prompts execute sequentially, each waiting for the previous to complete
-
+1. When a subtask command with `return` executes, the return prompt is appended to the task output
+2. When the subtask completes, each `chain` prompt is sent as a synthetic user message (hidden to the user)
+3. Chain prompts execute sequentially
 ## License
 
 MIT
