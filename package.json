@@ -3,14 +3,13 @@
   "name": "@openspoon/subtask2",
   "version": "0.1.0",
   "type": "module",
-  "description": "OpenCode plugin for enhanced subtask control with return context and prompt chaining",
+  "description": "Opencode plugin for enhanced subtask control with return context and prompt chaining",
   "main": "./dist/subtask2/index.js",
   "types": "./dist/subtask2/index.d.ts",
   "scripts": {
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc",
-    "prepublishOnly": "npm run build",
-    "dev": "opencode plugin dev"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "opencode",
@@ -22,10 +21,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openspoon/subtask2.git"
+    "url": "git+https://github.com/spoons-and-mirrors/subtask2.git"
   },
   "author": "openspoon",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=0.13.7"
   },

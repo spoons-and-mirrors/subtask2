@@ -17,6 +17,6 @@
     "sourceMap": true,
     "types": ["node", "bun-types"]
   },
-  "include": ["index.ts"],
+  "include": ["src/**/*", "index.ts"],
   "exclude": ["node_modules", "dist", ".opencode"]
 }
