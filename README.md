@@ -42,7 +42,7 @@ Review PR#355 for bugs, security issues, and code style problems.
 ## How It Works
 
 1. When a subtask command with `return` executes, the return prompt is appended to the task output
-2. When the subtask completes, each `chain` prompt is sent as a synthetic user message (hidden to the user)
+2. When the subtask completes, each `chain` prompt is sent as a user message
 3. Chain prompts execute sequentially
 ## License
 

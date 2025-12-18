@@ -96,7 +96,7 @@ const plugin: Plugin = async (ctx) => {
       if (!chain.length) chainState.delete(input.sessionID);
       await client.session.promptAsync({
         path: { id: input.sessionID },
-        body: { parts: [{ type: "text", text: next, synthetic: true }] },
+        body: { parts: [{ type: "text", text: next }] },
       });
     },
   };
