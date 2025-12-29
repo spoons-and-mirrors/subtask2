@@ -5,6 +5,57 @@ interface CommandConfig {
   chain: string[];
 }
 
+interface Subtask2Config {
+  replace_generic: boolean;
+  prompt?: string;
+}
+
+const DEFAULT_PROMPT =
+  "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step.";
+
+const CONFIG_PATH = `${Bun.env.HOME ?? ""}/.config/opencode/subtask2.jsonc`;
+
+function isValidConfig(obj: unknown): obj is Subtask2Config {
+  if (typeof obj !== "object" || obj === null) return false;
+  const cfg = obj as Record<string, unknown>;
+  if (typeof cfg.replace_generic !== "boolean") return false;
+  if (cfg.prompt !== undefined && typeof cfg.prompt !== "string") return false;
+  return true;
+}
+
+async function loadConfig(): Promise<Subtask2Config> {
+  const defaultConfig: Subtask2Config = {
+    replace_generic: true,
+  };
+
+  try {
+    const file = Bun.file(CONFIG_PATH);
+    if (await file.exists()) {
+      const text = await file.text();
+      const stripped = text
+        .replace(/\/\/.*$/gm, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+      const parsed = JSON.parse(stripped);
+      if (isValidConfig(parsed)) {
+        return parsed;
+      }
+    }
+  } catch {}
+
+  await Bun.write(
+    CONFIG_PATH,
+    `{
+  // Replace OpenCode's generic "Summarize..." prompt when no return is specified
+  "replace_generic": true
+
+  // Custom prompt to use (uses subtask2 substitution prompt by default)
+  // "prompt": "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step."
+}
+`
+  );
+  return defaultConfig;
+}
+
 function parseFrontmatter(content: string): Record<string, string | string[]> {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return {};
@@ -62,21 +113,25 @@ async function buildManifest(): Promise<Record<string, CommandConfig>> {
 }
 
 let configs: Record<string, CommandConfig> = {};
+let pluginConfig: Subtask2Config = {replace_generic: true};
 let client: any = null;
 const callState = new Map<string, string>();
 const chainState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
+let hasActiveSubtask = false;
 
 const OPENCODE_GENERIC =
   "Summarize the task tool output above and continue with your task.";
 
 const plugin: Plugin = async (ctx) => {
   configs = await buildManifest();
+  pluginConfig = await loadConfig();
   client = ctx.client;
 
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "task") return;
+      hasActiveSubtask = true;
       const cmd = output.args?.command;
       if (cmd && configs[cmd]) {
         callState.set(input.callID, cmd);
@@ -102,6 +157,13 @@ const plugin: Plugin = async (ctx) => {
             for (const [sessionID, returnPrompt] of pendingReturns) {
               part.text = returnPrompt;
               pendingReturns.delete(sessionID);
+              hasActiveSubtask = false;
+              return;
+            }
+
+            if (hasActiveSubtask && pluginConfig.replace_generic) {
+              part.text = pluginConfig.prompt ?? DEFAULT_PROMPT;
+              hasActiveSubtask = false;
               return;
             }
           }

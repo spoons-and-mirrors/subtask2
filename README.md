@@ -4,18 +4,21 @@ OpenCode plugin that controls what happens **after** a subtask completes.
 
 ## The Problem
 
-When a subtask (subagent) finishes and returns to the main agent, the main agent typically just relays the response:
+When a subtask (subagent) finishes, OpenCode injects a generic prompt: `"Summarize the task tool output above and continue with your task."`
 
-> "Here's what the subagent found: [result]" — _end of turn_
+This often leads to the main agent just relaying the response:
+
+> "Here's what the subagent found: [result]" — *end of turn*
 
 The main agent becomes a passive messenger rather than an active participant.
 
 ## The Solution
 
-This plugin adds two frontmatter parameters to subtask commands:
+This plugin intercepts OpenCode's synthetic message and replaces it with something better:
 
-- **`return`**: Injects a prompt at the end of the subtask output, giving the main agent its own task instead of just relaying information
-- **`chain`**: Queues follow-up prompts that execute sequentially after the subtask completes
+1. **Per-command `return` prompt** — Give specific instructions for what the main agent should do with the subtask result
+2. **Global fallback** — Even without `return`, replace the generic prompt with one that encourages critical thinking
+3. **`chain`** — Queue follow-up prompts that execute sequentially after the subtask completes
 
 ## Installation
 
@@ -26,6 +29,34 @@ Add to your `opencode.json`:
   "plugins": ["@openspoon/subtask2"]
 }
 ```
+
+## Configuration
+
+On first run, the plugin creates `~/.config/opencode/subtask2.jsonc`:
+
+```jsonc
+{
+  // Replace OpenCode's generic "Summarize..." prompt when no return is specified
+  "replace_generic": true
+
+  // Custom prompt to use (uses built-in default if not set)
+  // "prompt": "Your custom prompt here"
+}
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `replace_generic` | boolean | `true` | Replace the generic prompt for subtasks without a `return` param |
+| `prompt` | string | (built-in) | Custom replacement prompt. Default: "Challenge and validate the task output above. Verify assumptions, identify gaps or errors, then continue with the next logical step." |
+
+**Priority:**
+
+1. Command `return` param → always wins
+2. Config `prompt` → used when no `return` and `replace_generic: true`
+3. Built-in default → used when no `return`, `replace_generic: true`, and no custom `prompt`
+4. OpenCode's original → only if `replace_generic: false`
 
 ## Usage
 
@@ -51,21 +82,27 @@ Review PR#355 for bugs, security issues, and code style problems.
 
 ## How It Works
 
-**Without `return`:**
+**Without this plugin:**
 
 ```
-Subagent → "Found 3 bugs in the code" → Main agent → "The subagent found 3 bugs" → END
+Subagent → "Found 3 bugs" → OpenCode adds "Summarize..." → Main agent → "The subagent found 3 bugs" → END
 ```
 
 **With `return`:**
 
 ```
-Subagent → "Found 3 bugs" + "Now assess and implement fixes" → Main agent → *starts working on fixes*
+Subagent → "Found 3 bugs" → Plugin replaces with "Assess and implement fixes" → Main agent → *starts working on fixes*
 ```
 
-The `return` prompt is injected into the subagent's response, so the main agent receives instructions rather than just information to relay.
+**Without `return` but `replace_generic: true`:**
 
-`chain` then allows you to queue additional prompts that fire sequentially after each completion, enabling simple multi-step automated workflows.
+```
+Subagent → "Found 3 bugs" → Plugin replaces with "Challenge and validate..." → Main agent → *critically evaluates and acts*
+```
+
+The plugin intercepts OpenCode's synthetic user message and replaces it, so the main agent receives instructions from the "user" rather than just being told to summarize.
+
+`chain` allows you to queue additional prompts that fire sequentially after each completion, enabling multi-step automated workflows.
 
 ## License
 
