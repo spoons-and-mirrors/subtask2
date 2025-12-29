@@ -17,8 +17,9 @@ The main agent becomes a passive messenger rather than an active participant.
 This plugin intercepts OpenCode's synthetic message and replaces it with something better:
 
 1. **Per-command `return` prompt** — Give specific instructions for what the main agent should do with the subtask result
-2. **Global fallback** — Even without `return`, replace the generic prompt with one that encourages critical thinking
-3. **`chain`** — Queue follow-up prompts that execute sequentially after the subtask completes
+2. **`parallel`** — Spawn additional subtasks alongside the main command, all running concurrently
+3. **Global fallback** — Even without `return`, replace the generic prompt with one that encourages critical thinking
+4. **`chain`** — Queue follow-up prompts that execute sequentially after the subtask completes
 
 ## Installation
 
@@ -60,7 +61,7 @@ On first run, the plugin creates `~/.config/opencode/subtask2.jsonc`:
 
 ## Usage
 
-Add `return` and/or `chain` to your command frontmatter:
+Add `return`, `parallel`, and/or `chain` to your command frontmatter:
 
 ### Example: Code Review Command
 
@@ -79,6 +80,26 @@ chain:
 
 Review PR#355 for bugs, security issues, and code style problems.
 ```
+
+### Example: Parallel Research Command
+
+`.opencode/command/research.md`
+
+```markdown
+---
+description: Research a topic from multiple angles simultaneously
+agent: general
+subtask: true
+parallel: security-research, performance-research, ux-research
+return: Synthesize the parallel research results. Identify common themes, conflicts, and actionable recommendations.
+---
+
+Research best practices for implementing authentication in our app.
+```
+
+When you run `/research`, the plugin spawns three additional subtasks (`security-research`, `performance-research`, `ux-research`) in parallel alongside the main command. All four run concurrently, and when they complete, the main agent synthesizes the results.
+
+**Note:** Parallel commands ignore their own `return`/`chain` params when invoked via `parallel`. The parent command's `return` applies to the combined result.
 
 ## How It Works
 
@@ -103,6 +124,12 @@ Subagent → "Found 3 bugs" → Plugin replaces with "Challenge and validate..."
 The plugin intercepts OpenCode's synthetic user message and replaces it, so the main agent receives instructions from the "user" rather than just being told to summarize.
 
 `chain` allows you to queue additional prompts that fire sequentially after each completion, enabling multi-step automated workflows.
+
+`parallel` spawns multiple subtasks concurrently - useful for research, brainstorming, or any task that benefits from multiple perspectives running in parallel.
+
+## Requirements
+
+The `parallel` feature requires OpenCode with the `command.execute.before` hook (added in a recent update). Ensure you're running the latest version.
 
 ## License
 
