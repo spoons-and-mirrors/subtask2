@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type {Plugin} from "@opencode-ai/plugin";
 
 interface CommandConfig {
   return?: string;
@@ -35,7 +35,10 @@ function parseFrontmatter(content: string): Record<string, string | string[]> {
 async function buildManifest(): Promise<Record<string, CommandConfig>> {
   const manifest: Record<string, CommandConfig> = {};
   const home = Bun.env.HOME ?? "";
-  const dirs = [`${home}/.config/opencode/command`, `${Bun.env.PWD ?? "."}/.opencode/command`];
+  const dirs = [
+    `${home}/.config/opencode/command`,
+    `${Bun.env.PWD ?? "."}/.opencode/command`,
+  ];
 
   for (const dir of dirs) {
     try {
@@ -62,6 +65,10 @@ let configs: Record<string, CommandConfig> = {};
 let client: any = null;
 const callState = new Map<string, string>();
 const chainState = new Map<string, string[]>();
+const pendingReturns = new Map<string, string>();
+
+const OPENCODE_GENERIC =
+  "Summarize the task tool output above and continue with your task.";
 
 const plugin: Plugin = async (ctx) => {
   configs = await buildManifest();
@@ -82,11 +89,24 @@ const plugin: Plugin = async (ctx) => {
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
-      if (!cmd) return;
-      if (configs[cmd]?.return) {
-        output.output += `\n\n${configs[cmd].return}`;
-      }
       callState.delete(input.callID);
+      if (cmd && configs[cmd]?.return) {
+        pendingReturns.set(input.sessionID, configs[cmd].return);
+      }
+    },
+
+    "experimental.chat.messages.transform": async (_input, output) => {
+      for (const msg of output.messages) {
+        for (const part of msg.parts) {
+          if (part.type === "text" && part.text === OPENCODE_GENERIC) {
+            for (const [sessionID, returnPrompt] of pendingReturns) {
+              part.text = returnPrompt;
+              pendingReturns.delete(sessionID);
+              return;
+            }
+          }
+        }
+      }
     },
 
     "experimental.text.complete": async (input) => {
@@ -95,8 +115,8 @@ const plugin: Plugin = async (ctx) => {
       const next = chain.shift()!;
       if (!chain.length) chainState.delete(input.sessionID);
       await client.session.promptAsync({
-        path: { id: input.sessionID },
-        body: { parts: [{ type: "text", text: next }] },
+        path: {id: input.sessionID},
+        body: {parts: [{type: "text", text: next}]},
       });
     },
   };
