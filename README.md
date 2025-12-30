@@ -1,4 +1,4 @@
-# @openspoon/subtask2
+# subtask2 - an opencode plugin
 
 `@openspoon/subtask2` gives super powers to your slash commands with new frontmatter parameters and more...
 
