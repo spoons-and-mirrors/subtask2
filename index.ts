@@ -195,9 +195,17 @@ const plugin: Plugin = async (ctx) => {
         const args = parallelCmd.arguments ?? input.arguments;
         template = template.replace(/\$ARGUMENTS/g, args);
 
+        // Parse model string "provider/model" into {providerID, modelID}
+        let model: {providerID: string, modelID: string} | undefined;
+        if (typeof fm.model === "string" && fm.model.includes("/")) {
+          const [providerID, ...rest] = fm.model.split("/");
+          model = { providerID, modelID: rest.join("/") };
+        }
+
         output.parts.push({
           type: "subtask" as const,
           agent: (fm.agent as string) || "general",
+          model,
           description: (fm.description as string) || `Parallel: ${parallelCmd.command}`,
           command: parallelCmd.command,
           prompt: template,
