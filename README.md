@@ -148,20 +148,6 @@ chain:
 Design a React modal component.
 ```
 
-## FAQ
-
-**Q: Why doesn't this work with my command?**
-A: Check that you have `subtask: true` in the frontmatter.
-
-**Q: Why doesn't this affect Task tool calls the LLM makes?**
-A: OpenCode only injects the "summarize" message after `subtask: true` commands, not regular task tool usage. This plugin can only replace what OpenCode injects.
-
-**Q: Can I use `return` with regular (non-subtask) commands?**
-A: No. Without `subtask: true`, there's no injected message to replace.
-
-**Q: How do I pass arguments to parallel commands?**
-A: Currently, parallel commands use their own template as-is. Argument passing is planned for a future version.
-
 ## License
 
 MIT
