@@ -6,21 +6,11 @@ When a subtask command completes, OpenCode tells the main agent to "summarize th
 
 This plugin replaces that "summarize" message with the instructions you want to give it, sending the main agent off on a mission given the subtask results.
 
-## Prerequisites
-
-**This plugin ONLY works with commands that have `subtask: true` in their frontmatter.**
-
-```markdown
----
-subtask: true   ← REQUIRED for this plugin to do anything
----
-```
-
 ## Features
 
 ### 1. `return` — Per-command instructions
 
-Tell the main agent exactly what to do after THIS specific subtask:
+Tell the main agent exactly what to do after a command completes:
 
 ```markdown
 ---
@@ -30,6 +20,11 @@ return: Assess the code review. Challenge the findings, then implement the valid
 
 Review this PR for bugs.
 ```
+
+- For `subtask: true` commands, it replaces OpenCode's "summarize" message.
+- For regular commands, it's injected as a follow-up message after the LLM turn ends, identical to what the "chain" param does
+
+**Note:** For non-subtask commands, requires OpenCode with `command.execute.before` hook (pending PR).
 
 ### 2. `parallel` — Run multiple subtasks concurrently ⚠️ **PENDING PR** (ignored for now)
 
@@ -53,13 +48,13 @@ This runs 3 subtasks in parallel:
 
 When ALL complete, the main agent gets the `return` prompt.
 
-**Note:** Parallel commands must be other command files. Their own `return`/`chain` are ignored — only the parent's `return` applies.
+**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their own `return`/`chain` are ignored — only the parent's `return` applies.
 
 **Requires:** OpenCode with `command.execute.before` hook (pending PR).
 
 ### 3. `chain` — Sequential follow-up prompts
 
-Queue user messages that fire after the subtask completes:
+Queue user messages that fire after the command completes:
 
 ```markdown
 ---
@@ -73,12 +68,15 @@ chain:
 Find the bug in auth.ts
 ```
 
-Flow: Subtask → return prompt → LLM works → chain[0] fires → LLM works → chain[1] fires → ...
+Flow: Command → return prompt → LLM works → chain[0] fires → LLM works → chain[1] fires → ...
 
-### 4. Global fallback — Better default for all subtasks
+**Note:** For non-subtask commands, requires OpenCode with `command.execute.before` hook (pending PR).
 
-Even without `return`, this plugin will replace OpenCode's generic "summarize" injected message with something "better".
-By default it uses: "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step."
+### 4. Global fallback — Better default for subtasks
+
+For `subtask: true` commands without a `return`, this plugin replaces OpenCode's generic "summarize" message with something better.
+
+Default: "Challenge and validate the task output. Verify assumptions, identify gaps or errors, then continue with the next logical step."
 
 Configure in `~/.config/opencode/subtask2.jsonc`:
 
@@ -115,7 +113,6 @@ When a subtask completes, what message does the main agent see?
 
 ```markdown
 ---
-subtask: true
 return: Implement the suggested improvements.
 ---
 
@@ -138,7 +135,6 @@ Identify the core problem in our auth flow.
 
 ```markdown
 ---
-subtask: true
 return: Create the component.
 chain:
   - Add unit tests.
