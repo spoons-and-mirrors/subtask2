@@ -1,10 +1,13 @@
-# @openspoon/subtask2 - an opencode plugin
+# @openspoon/subtask2
 
-## The Problem
+`@openspoon/subtask2` gives super powers to your slash commands with 3 new frontmatter parameters
 
-When a subtask command completes, OpenCode tells the main agent to "summarize the findings." The main agent reports back to you and no further action is taken on the subtask results. The agentic loop dies.
+- `return` — Tell the main agent what to do with subtask results (not just "summarize")
+- `parallel` — To run multiple subtasks concurrently (acceptsarguments)
+- `chain` — Queue follow-up prompts that fire automatically
+- 'better' defaults — Replace the generic "summarize" on subtask return with something that keeps the agent working or a custom generic prompt
 
-This plugin replaces that "summarize" message with the instructions you want to give it, sending the main agent off on a mission given the subtask(s) results.
+⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, and for proper model inheritance to work.
 
 ## Features
 
