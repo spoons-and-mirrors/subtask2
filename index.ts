@@ -155,6 +155,7 @@ let client: any = null;
 const callState = new Map<string, string>();
 const chainState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
+const pendingNonSubtaskReturns = new Map<string, string>();
 let hasActiveSubtask = false;
 
 const OPENCODE_GENERIC =
@@ -169,6 +170,18 @@ const plugin: Plugin = async (ctx) => {
     "command.execute.before": async (input: {command: string; sessionID: string; arguments: string}, output: {parts: any[]}) => {
       const cmd = input.command;
       const config = configs[cmd];
+      
+      // Track non-subtask commands with return/chain for later injection
+      const hasSubtaskPart = output.parts.some((p: any) => p.type === "subtask");
+      if (!hasSubtaskPart && config) {
+        if (config.return) {
+          pendingNonSubtaskReturns.set(input.sessionID, config.return);
+        }
+        if (config.chain.length) {
+          chainState.set(input.sessionID, [...config.chain]);
+        }
+      }
+      
       if (!config?.parallel?.length) return;
 
       for (const parallelCmd of config.parallel) {
@@ -231,6 +244,18 @@ const plugin: Plugin = async (ctx) => {
     },
 
     "experimental.text.complete": async (input) => {
+      // Handle non-subtask command returns (inject as follow-up message)
+      const pendingReturn = pendingNonSubtaskReturns.get(input.sessionID);
+      if (pendingReturn && client) {
+        pendingNonSubtaskReturns.delete(input.sessionID);
+        await client.session.promptAsync({
+          path: {id: input.sessionID},
+          body: {parts: [{type: "text", text: pendingReturn}]},
+        });
+        return;
+      }
+
+      // Handle chain
       const chain = chainState.get(input.sessionID);
       if (!chain?.length || !client) return;
       const next = chain.shift()!;
