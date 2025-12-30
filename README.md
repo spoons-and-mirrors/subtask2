@@ -48,9 +48,7 @@ This runs 3 subtasks in parallel:
 
 When ALL complete, the main agent gets the `return` prompt.
 
-**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their own `return`/`chain` are ignored — only the parent's `return` applies.
-
-**Requires:** OpenCode with `command.execute.before` hook (pending PR).
+**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their `return`/`chain` are ignored — only the parent's `return`/`chain` applies.
 
 ### 3. `chain` — Sequential follow-up prompts
 
