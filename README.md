@@ -36,7 +36,7 @@ Review the PR# $ARGUMENTS for bugs.
 - For `subtask: true` commands, it replaces opencode's default injected "summarize" message.
 - For regular commands, it injects the return prompt as a follow-up message when the LLM turn ends, identical to what the "chain" param does
 
-**Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
+## **Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
 
 ### 2. `parallel` - Run multiple subtasks concurrently ⚠️ **PENDING PR** (ignored for now)
 
@@ -95,7 +95,7 @@ All three inherit the main command's `$ARGUMENTS`.
 /mycommand main args || parallel1 args || parallel2 args
 ```
 
-Each segment maps to a parallel command in order. Priority: **frontmatter args > pipe args > inherit main args**.
+## Each segment maps to a parallel command in order. Priority: **frontmatter args > pipe args > inherit main args**.
 
 ### 3. `chain` - Sequential follow-up prompts
 
@@ -114,7 +114,7 @@ Find the bug in auth.ts
 
 Flow: Command → return prompt → LLM works → chain[0] fires → LLM works → chain[1] fires → ...
 
-**Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
+## **Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
 
 ### 4. Global fallback - 'Better' default for subtasks
 
@@ -134,14 +134,14 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 }
 ```
 
-## Priority Order
-
-When a subtask completes, what message does the main agent see?
+#### Priority Order
 
 1. **`return` param** → Your specific instructions (highest priority)
 2. **Config `generic_return`** → Your custom fallback (if `replace_generic: true`)
 3. **Built-in default** → "Challenge and validate..." (if `replace_generic: true`)
 4. **OpenCode original** → "Summarize..." (if `replace_generic: false`)
+
+---
 
 ## Quick Examples
 
