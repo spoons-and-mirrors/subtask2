@@ -168,7 +168,6 @@ All three inherit the main command's `$ARGUMENTS`.
 /mycommand main args || parallel1 args || parallel2 args
 ```
 
-Each segment maps to a parallel command in order.
 **Priority is** `pipe args > frontmatter args > inherit main args`
 
 ### 3. Global fallback - 'Better' default for subtasks
