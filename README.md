@@ -21,6 +21,8 @@ This plugins affects how opencode handles commands with additional frontmatter p
 
 ⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask command features, as well as proper model inheritance (piping the right model and agent to the right subtask) to work.
 
+---
+
 <details>
 <summary><strong>Some examples</strong> (click to expand)</summary>
 
