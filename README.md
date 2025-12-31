@@ -1,18 +1,8 @@
-# subtask2 - a stronger opencode /command handler
+# A stronger opencode /command handler
 
-Give super powers to your slash commands with `@openspoon/subtask2`
+### TL:DR - Keep the agentic loop alive + parallel commands
 
-To install the plugin, add subtask2 to your opencode config plugin array
-
-```json
-{
-  "plugins": ["@openspoon/subtask2"]
-}
-```
-
-## TL:DR - Keep the agentic loop alive + parallel commands
-
-This plugins affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution
+This plugins affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. Super powers for your slash commands
 
 - `return` tell the main agent what to do with **command** or **subtask(s)** results. Supports multiple sequential prompts.
 - `parallel` run multiple subtasks concurrently (accepts arguments)
@@ -207,6 +197,12 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
 </details>
 
-#### License
+---
 
-MIT
+To install, add subtask2 to your opencode config plugin array
+
+```json
+{
+  "plugins": ["@openspoon/subtask2"]
+}
+```
