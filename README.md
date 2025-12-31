@@ -7,14 +7,14 @@ This plugins affects how opencode handles slash commands with additional frontma
 - `return` tell the main agent what to do with **command** or **subtask(s)** results. Supports multiple sequential prompts.
 - `parallel` run multiple subtasks concurrently (accepts arguments)
 
-⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask command features, as well as proper model inheritance (piping the right model and agent to the right subtask) to work.
+⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and `subtask:false` command features, as well as proper model inheritance (piping the right model and agent to the right subtask) to work.
 
 ---
 
 <details>
 <summary><strong>Some examples</strong> (click to expand)</summary>
 
-**Parallel subtask with different models (A/B plan comparison)**
+**Parallel subtask with different models (A/B/C plan comparison)**
 
 ```yaml
 ---
