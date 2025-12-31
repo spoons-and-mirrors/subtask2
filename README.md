@@ -4,7 +4,7 @@
 
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. It is a set of new command features designed to better orchestrate, steer and keep the agentic loop alive. Compose as simple or complex a workflow as you want.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution as well as chaining. Simple to use and designed to allow better orchestration, steerability and longevity of the agentic loop. Compose as simple or complex a workflow as you want. If you already know how opencode commands work, you'll be right at home.
 
 ### Key features
 
