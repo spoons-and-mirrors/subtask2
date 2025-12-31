@@ -202,8 +202,8 @@ const plugin: Plugin = async (ctx) => {
         const fm = parseFrontmatter(cmdFile.content);
         let template = getTemplateBody(cmdFile.content);
         
-        // Priority: frontmatter args > pipe args > main args
-        const args = parallelCmd.arguments ?? parallelArgs[i] ?? mainArgs;
+        // Priority: pipe args > frontmatter args > main args
+        const args = parallelArgs[i] ?? parallelCmd.arguments ?? mainArgs;
         template = template.replace(/\$ARGUMENTS/g, args);
 
         // Parse model string "provider/model" into {providerID, modelID}

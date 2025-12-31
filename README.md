@@ -16,12 +16,15 @@ Add subtask2 to your opencode config plugin array
 
 This plugins affects how opencode handles commands with additional frontmatter parameters and enables parallel commands
 
-- `return` tells the main agent what to do with subtask(s) results (not just "summarize it and end turn"). Supports multiple sequential prompts.
-- `parallel` runs multiple subtasks concurrently (accepts arguments)
+- `return` tell the main agent what to do with command or subtask(s) results. Supports multiple sequential prompts.
+- `parallel` run multiple subtasks concurrently (accepts arguments)
 
-⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, as well as proper model inheritance to work.
+⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask command features, as well as proper model inheritance (piping the right model and agent to the right subtask) to work.
 
 ## Examples
+
+<details>
+<summary><strong>Checkout some use cases</strong> (click to expand)</summary>
 
 **Parallel subtask with different models (A/B plan comparison)**
 
@@ -33,7 +36,7 @@ subtask: true
 parallel: plan-gemini, plan-gpt
 return:
   - Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
-  - Feed the implementation plan to a @review subagent, let's poke holes.
+  - Feed the implementation plan to a review subagent, let's poke holes.
 ---
 Plan the implementation for the following feature
 > $ARGUMENTS
@@ -81,6 +84,10 @@ return:
 Conceptually design a React modal component with the following requirements
 > $ARGUMENTS
 ```
+
+</details>
+
+---
 
 ## Features
 
@@ -134,6 +141,12 @@ When ALL complete, the main agent gets the `return` prompt.
 
 **With custom arguments per command:**
 
+```bash
+/mycommand main args || parallel1 args || parallel2 args
+```
+
+or
+
 ```yaml
 ---
 subtask: true
@@ -152,7 +165,7 @@ Design a new auth system for $ARGUMENTS
 - `research-codebase` gets "auth middleware implementation"
 - `security-audit` inherits the main command's `$ARGUMENTS`
 
-**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their `return` is ignored — only the parent's `return` applies.
+**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their `return` are ignored — only the parent's `return` applies.
 
 **Tip:** If all commands share the same arguments, use the simple syntax:
 
@@ -164,11 +177,11 @@ All three inherit the main command's `$ARGUMENTS`.
 
 **Tip:** You can also pass arguments inline using `||` separator:
 
-```
+```bash
 /mycommand main args || parallel1 args || parallel2 args
 ```
 
-Each segment maps to a parallel command in order. Priority: **frontmatter args > pipe args > inherit main args**.
+Each segment maps to a parallel command in order. Priority: **pipe args > frontmatter args > inherit main args**.
 
 ### 3. Global fallback - 'Better' default for subtasks
 
