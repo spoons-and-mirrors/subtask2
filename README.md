@@ -1,19 +1,6 @@
-# subtask2 - an opencode plugin
+# subtask2 - a stronger opencode /command handler
 
 Give super powers to your slash commands with `@openspoon/subtask2`
-
-## TL:DR
-
-This plugins affects how opencode handles commands with additional frontmatter parameters and enables parallel commands
-
-- `return` tells the main agent what to do with subtask(s) results (not just "summarize it")
-- `parallel` runs multiple subtasks concurrently (accepts arguments)
-- `chain` queues follow-up prompts that fire automatically (because why not)
-- 'better' defaults replace the generic opencode's "summarize..." on subtask completion with something that keeps the agent working, or a custom generic prompt
-
-See the [Examples](#quick-examples) section for ideas on what this unlocks.
-
-⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, as well as proper model inheritance to work.
 
 ## Installation
 
@@ -25,29 +12,65 @@ Add subtask2 to your opencode config plugin array
 }
 ```
 
+## TL:DR - Keep the agentic loop alive + parallel commands
+
+This plugins affects how opencode handles commands with additional frontmatter parameters and enables parallel commands
+
+- `return` tells the main agent what to do with subtask(s) results (not just "summarize it and end turn")
+- `parallel` runs multiple subtasks concurrently (accepts arguments)
+- `chain` queues follow-up prompts that fire automatically (because why not...)
+- 'better' defaults replace the generic opencode's "summarize..." on subtask completion with something that keeps the agent working, or a custom generic prompt
+
+⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, as well as proper model inheritance to work.
+
 ## Examples
 
-**Parallel: Same task, different models**
+**Parallel subtask with different models (A/B plan comparison)**
 
 ```yaml
 ---
 description: multi-model ensemble, 3 models plan in parallel, best ideas unified
-agent: build
-model: github-copilot/gpt-5.2
+model: github-copilot/claude-opus-4.5
 subtask: true
-parallel: plan-gemini, plan-opus
+parallel: plan-gemini, plan-gpt
 return: Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
-chain:
-  - feed the implementation plan to a @review subagent, let's poke holes.
+chain: feed the implementation plan to a @review subagent, let's poke holes.
 ---
-Plan the implementation for the following feature: $ARGUMENTS
+Plan the implementation for the following feature
+> $ARGUMENTS
 ```
 
-**Chain: Multi-step workflow**
+**Isolated "Plan" mode**
+
+```yaml
+---
+description: two-step implementation planning and validation
+agent: build
+subtask: true
+return: Challenge, verify and validate the plan by reviewing the codebase directly. Then approve, revise, or reject the plan. Implement if solid
+chain: take a step back, review what was done/planned for correctness, revise if needed
+---
+In this session you WILL ONLY PLAN AND NOT IMPLEMENT. You are to take the `USER INPUT` and research the codebase until you have gathered enough knowledge to elaborate a full fledged implementation plan
+
+You MUST consider alternative paths and keep researching until you are confident you found the BEST possible implementation
+
+BEST often means simple, lean, clean, low surface and coupling
+Make it practical, maintainable and not overly abstracted
+
+Follow your heart
+> DO NOT OVERENGINEER SHIT
+
+USER INPUT
+$ARGUMENTS
+```
+
+**Multi-step workflow**
 
 ```yaml
 ---
 description: design, implement, test, document
+agent: build
+model: github-copilot/claude-opus-4.5
 subtask: true
 return: Implement the component following the conceptual design specifications.
 chain:
@@ -55,18 +78,8 @@ chain:
   - Update the documentation and add usage examples.
   - Run the test suite and fix any failures.
 ---
-Conceptually design a React modal component with the following requirements: $ARGUMENTS
-```
-
-**Parallel: Multiple perspectives at once**
-
-```yaml
----
-subtask: true
-parallel: brainstorm-solutions, research-prior-art
-return: Evaluate all ideas and create an implementation plan.
----
-Identify the core problem in our auth flow.
+Conceptually design a React modal component with the following requirements
+> $ARGUMENTS
 ```
 
 ## Features
