@@ -2,7 +2,7 @@
 
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. It is a set of new command features designed to better orchestrate, steer and keep the agentic loop alive. The orchestration can be as simple or complex as you make it.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. It is a set of new command features designed to better orchestrate, steer and keep the agentic loop alive. Compose as simple or complex a workflow as you want.
 
 ### Key features
 
@@ -225,6 +225,8 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
 ---
 
+![subtask2 header](media/header.webp)
+
 To install, add subtask2 to your opencode config plugin array
 
 ```json
@@ -232,3 +234,5 @@ To install, add subtask2 to your opencode config plugin array
   "plugins": ["@openspoon/subtask2"]
 }
 ```
+
+[Watch demo](media/demo.mp4)
