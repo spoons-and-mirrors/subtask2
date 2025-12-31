@@ -190,6 +190,8 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
 #### Priority Order
 
+``return` param > config `generic_return` > `
+
 1. **`return` param** → Your specific instructions (highest priority)
 2. **Config `generic_return`** → Your custom fallback (if `replace_generic: true`)
 3. **Built-in default** → "Challenge and validate..." (if `replace_generic: true`)
