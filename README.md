@@ -4,13 +4,13 @@
 
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution as well as chaining. Simple to use and designed to allow better orchestration, steerability and longevity of the agentic loop. Compose as simple or complex a workflow as you want. If you already know how opencode commands work, you'll be right at home.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution as well as chaining. It's simple to use and designed to allow better orchestration, steerability and longevity of the agentic loop. Compose as simple or complex a workflow as you want. If you already know how opencode commands work, you'll be right at home.
 
 ### Key features
 
-- `return` instruct the main session on **command** or **subtask(s)** results - _can be chained, supports `/command` syntax_
+- `return` instruct the main session on **command/subtask(s)** results - \_can be chained, supports /commands
 - `parallel` run subtasks concurrently - _only parent's `return` applies when all are done_
-  - `command` extra command to run along the main one - _forced into a subtask_
+  - `command` extra command to run alongside the main one - _forced into a subtask_
   - `arguments` pass arguments with command frontmatter or `||` message pipe
 
 #### ⚠️ Pending PR
@@ -18,70 +18,6 @@ This plugin affects how opencode handles slash commands with additional frontmat
 Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and `subtask:false` command features, as well as proper model inheritance (piping the right model and agent to the right subtask and back) to work.
 
 ---
-
-<details>
-<summary><strong>Some examples</strong> (click to expand)</summary>
-
-**Parallel subtask with different models (A/B/C plan comparison)**
-
-```yaml
----
-description: multi-model ensemble, 3 models plan in parallel, best ideas unified
-model: github-copilot/claude-opus-4.5
-subtask: true
-parallel: /plan-gemini, /plan-gpt
-return:
-  - Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
-  - /review-plan focus on simplicity and correctness
----
-Plan the implementation for the following feature
-> $ARGUMENTS
-```
-
-**Isolated "Plan" mode**
-
-```yaml
----
-description: two-step implementation planning and validation
-agent: build
-subtask: true
-return:
-  - Challenge, verify and validate the plan by reviewing the codebase directly. Then approve, revise, or reject the plan. Implement if solid
-  - Take a step back, review what was done/planned for correctness, revise if needed
----
-In this session you WILL ONLY PLAN AND NOT IMPLEMENT. You are to take the `USER INPUT` and research the codebase until you have gathered enough knowledge to elaborate a full fledged implementation plan
-
-You MUST consider alternative paths and keep researching until you are confident you found the BEST possible implementation
-
-BEST often means simple, lean, clean, low surface and coupling
-Make it practical, maintainable and not overly abstracted
-
-Follow your heart
-> DO NOT OVERENGINEER SHIT
-
-USER INPUT
-$ARGUMENTS
-```
-
-**Multi-step workflow**
-
-```yaml
----
-description: design, implement, test, document
-agent: build
-model: github-copilot/claude-opus-4.5
-subtask: true
-return:
-  - Implement the component following the conceptual design specifications.
-  - Write comprehensive unit tests for all edge cases.
-  - Update the documentation and add usage examples.
-  - Run the test suite and fix any failures.
----
-Conceptually design a React modal component with the following requirements
-> $ARGUMENTS
-```
-
-</details>
 
 <details>
 <summary><strong>Feature documentation</strong> (click to expand)</summary>
@@ -229,6 +165,70 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 </details>
 
 <details>
+<summary><strong>Some examples</strong> (click to expand)</summary>
+
+**Parallel subtask with different models (A/B/C plan comparison)**
+
+```yaml
+---
+description: multi-model ensemble, 3 models plan in parallel, best ideas unified
+model: github-copilot/claude-opus-4.5
+subtask: true
+parallel: /plan-gemini, /plan-gpt
+return:
+  - Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
+  - /review-plan focus on simplicity and correctness
+---
+Plan the implementation for the following feature
+> $ARGUMENTS
+```
+
+**Isolated "Plan" mode**
+
+```yaml
+---
+description: two-step implementation planning and validation
+agent: build
+subtask: true
+return:
+  - Challenge, verify and validate the plan by reviewing the codebase directly. Then approve, revise, or reject the plan. Implement if solid
+  - Take a step back, review what was done/planned for correctness, revise if needed
+---
+In this session you WILL ONLY PLAN AND NOT IMPLEMENT. You are to take the `USER INPUT` and research the codebase until you have gathered enough knowledge to elaborate a full fledged implementation plan
+
+You MUST consider alternative paths and keep researching until you are confident you found the BEST possible implementation
+
+BEST often means simple, lean, clean, low surface and coupling
+Make it practical, maintainable and not overly abstracted
+
+Follow your heart
+> DO NOT OVERENGINEER SHIT
+
+USER INPUT
+$ARGUMENTS
+```
+
+**Multi-step workflow**
+
+```yaml
+---
+description: design, implement, test, document
+agent: build
+model: github-copilot/claude-opus-4.5
+subtask: true
+return:
+  - Implement the component following the conceptual design specifications.
+  - Write comprehensive unit tests for all edge cases.
+  - Update the documentation and add usage examples.
+  - Run the test suite and fix any failures.
+---
+Conceptually design a React modal component with the following requirements
+> $ARGUMENTS
+```
+
+</details>
+
+<details>
 <summary><strong>Demo files</strong> (click to expand)</summary>
 
 Prompt used in the demo:
@@ -288,6 +288,6 @@ To install, add subtask2 to your opencode config plugin array
 }
 ```
 
-### Demo
+---
 
 ![Watch demo](media/demo.gif)
