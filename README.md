@@ -2,14 +2,15 @@
 
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. It is a set of new command features designed to better orchestrate, steer and keep the agentic loop alive.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. It is a set of new command features designed to better orchestrate, steer and keep the agentic loop alive. Compose as simple or complex a workflow as you want.
 
 ### Key features
 
-- `return` instruct the main session on **command** or **subtask(s)** results - _can be chained_
+- `return` instruct the main session on **command** or **subtask(s)** results - _can be chained, supports `/command` syntax_
 - `parallel` run subtasks concurrently - _only parent's `return` applies when all are done_
   - `command` extra command to run along the main one - _forced into a subtask_
   - `arguments` pass arguments with command frontmatter or `||` message pipe
+  - _nested parallels are automatically flattened_ (max depth: 5)
 
 #### ⚠️ Pending PR
 
@@ -27,10 +28,10 @@ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and
 description: multi-model ensemble, 3 models plan in parallel, best ideas unified
 model: github-copilot/claude-opus-4.5
 subtask: true
-parallel: plan-gemini, plan-gpt
+parallel: /plan-gemini, /plan-gpt
 return:
   - Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
-  - Feed the implementation plan to a review subagent, let's poke holes.
+  - /review-plan focus on simplicity and correctness
 ---
 Plan the implementation for the following feature
 > $ARGUMENTS
@@ -86,7 +87,7 @@ Conceptually design a React modal component with the following requirements
 
 ### 1. `return` - Command return instructions or the old 'look again' trick
 
-Tell the main agent exactly what to do after a command completes, supports chaining
+Tell the main agent exactly what to do after a command completes, supports chaining and triggering other commands.
 
 ```yaml
 ---
@@ -106,8 +107,22 @@ return: [Implement the fix, Run the tests]
 Find the bug in auth.ts
 ```
 
+**Trigger commands in return** using `/command args` syntax:
+
+```yaml
+---
+subtask: true
+return:
+  - /validate-plan the output above
+  - /implement-plan
+  - Run the tests and fix any failures
+---
+Design the auth system for $ARGUMENTS
+```
+
 - **First** `return` replaces (cf 3. Subtask `return` fallback) opencode's "summarize" message (for `subtask: true`) or fires as follow-up (for non-subtasks)
 - **Any additional** `return` fire sequentially after each LLM turn completes
+- **Commands** (starting with `/`) are executed as full commands with their own `parallel` and `return`
 
 **Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
 
@@ -118,12 +133,18 @@ Spawn additional command subtasks alongside the main one:
 ```yaml
 ---
 subtask: true
-parallel: security-review, perf-review
+parallel: /security-review, /perf-review
 return:
   - Synthesize all review results and create a unified action plan
   - Critically review the plan directly against the codebase, then revise or implement
 ---
 Review this code for correctness.
+```
+
+You can also use `/command args` syntax for inline arguments:
+
+```yaml
+parallel: /security-review focus on auth, /perf-review check db queries
 ```
 
 This runs 3 subtasks in parallel:
@@ -150,7 +171,7 @@ parallel:
     arguments: authentication flow
   - command: research-codebase
     arguments: auth middleware implementation
-  - security-audit
+  - /security-audit
 return: Synthesize all findings into an implementation plan.
 ---
 Design a new auth system for $ARGUMENTS
@@ -165,13 +186,15 @@ Design a new auth system for $ARGUMENTS
 **Tip:** You can also pass arguments inline using `||` separator:
 
 ```bash
-/mycommand main args || parallel1 args || parallel2 args
+/mycommand main args || parallel1 args || parallel2 args || return-cmd1 args || return-cmd2 args
 ```
 
-**Tip:** For all commands to inherit the main `$ARGUMENTS`, you can use a simpler syntax:
+Pipe segments map in order: main → parallels → return commands (only `/command` items, not prompts).
+
+**Tip:** For all commands to inherit the main `$ARGUMENTS`:
 
 ```yaml
-parallel: research-docs, research-codebase, security-audit
+parallel: /research-docs, /research-codebase, /security-audit
 ```
 
 #### Priority: pipe args > frontmatter args > inherit main args
@@ -202,6 +225,8 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
 ---
 
+![subtask2 header](media/header.webp)
+
 To install, add subtask2 to your opencode config plugin array
 
 ```json
@@ -209,3 +234,5 @@ To install, add subtask2 to your opencode config plugin array
   "plugins": ["@openspoon/subtask2"]
 }
 ```
+
+[Watch demo](media/demo.mp4)

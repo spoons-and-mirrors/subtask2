@@ -1,152 +1,20 @@
 import type {Plugin} from "@opencode-ai/plugin";
-import YAML from "yaml";
+import type {
+  CommandConfig,
+  Subtask2Config,
+  ParallelCommand,
+  SubtaskPart,
+} from "./types";
+import {loadConfig, DEFAULT_PROMPT} from "./config";
+import {
+  parseFrontmatter,
+  getTemplateBody,
+  parseParallelConfig,
+} from "./parser";
+import {loadCommandFile, buildManifest} from "./commands";
+import {log, clearLog} from "./logger";
 
-interface ParallelCommand {
-  command: string;
-  arguments?: string;
-}
-
-interface CommandConfig {
-  return: string[];
-  parallel: ParallelCommand[];
-  agent?: string;
-  description?: string;
-  template?: string;
-}
-
-interface Subtask2Config {
-  replace_generic: boolean;
-  generic_return?: string;
-}
-
-const DEFAULT_PROMPT =
-  "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step.";
-
-const CONFIG_PATH = `${Bun.env.HOME ?? ""}/.config/opencode/subtask2.jsonc`;
-
-function isValidConfig(obj: unknown): obj is Subtask2Config {
-  if (typeof obj !== "object" || obj === null) return false;
-  const cfg = obj as Record<string, unknown>;
-  if (typeof cfg.replace_generic !== "boolean") return false;
-  if (cfg.generic_return !== undefined && typeof cfg.generic_return !== "string") return false;
-  return true;
-}
-
-async function loadConfig(): Promise<Subtask2Config> {
-  const defaultConfig: Subtask2Config = {
-    replace_generic: true,
-  };
-
-  try {
-    const file = Bun.file(CONFIG_PATH);
-    if (await file.exists()) {
-      const text = await file.text();
-      const stripped = text
-        .replace(/\/\/.*$/gm, "")
-        .replace(/\/\*[\s\S]*?\*\//g, "");
-      const parsed = JSON.parse(stripped);
-      if (isValidConfig(parsed)) {
-        return parsed;
-      }
-    }
-  } catch {}
-
-  await Bun.write(
-    CONFIG_PATH,
-    `{
-  // Replace OpenCode's generic "Summarize..." prompt when no return is specified
-  "replace_generic": true
-
-  // Custom prompt to use (uses subtask2 substitution prompt by default)
-  // "generic_return": "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step."
-}
-`
-  );
-  return defaultConfig;
-}
-
-function parseFrontmatter(content: string): Record<string, unknown> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
-  try {
-    return YAML.parse(match[1]) ?? {};
-  } catch {
-    return {};
-  }
-}
-
-function getTemplateBody(content: string): string {
-  const match = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
-  return match ? match[1].trim() : content.trim();
-}
-
-async function loadCommandFile(name: string): Promise<{content: string; path: string} | null> {
-  const home = Bun.env.HOME ?? "";
-  const dirs = [
-    `${home}/.config/opencode/command`,
-    `${Bun.env.PWD ?? "."}/.opencode/command`,
-  ];
-
-  for (const dir of dirs) {
-    const path = `${dir}/${name}.md`;
-    try {
-      const file = Bun.file(path);
-      if (await file.exists()) {
-        return {content: await file.text(), path};
-      }
-    } catch {}
-  }
-  return null;
-}
-
-async function buildManifest(): Promise<Record<string, CommandConfig>> {
-  const manifest: Record<string, CommandConfig> = {};
-  const home = Bun.env.HOME ?? "";
-  const dirs = [
-    `${home}/.config/opencode/command`,
-    `${Bun.env.PWD ?? "."}/.opencode/command`,
-  ];
-
-  for (const dir of dirs) {
-    try {
-      const glob = new Bun.Glob("*.md");
-      for await (const file of glob.scan(dir)) {
-        const name = file.replace(/\.md$/, "");
-        const content = await Bun.file(`${dir}/${file}`).text();
-        const fm = parseFrontmatter(content);
-        const returnVal = fm.return;
-        const returnArr = returnVal ? (Array.isArray(returnVal) ? returnVal : [returnVal]) : [];
-        const parallel = fm.parallel;
-        let parallelArr: ParallelCommand[] = [];
-        if (parallel) {
-          if (Array.isArray(parallel)) {
-            parallelArr = parallel.map((p) => {
-              if (typeof p === "string") {
-                return {command: p.trim()};
-              }
-              if (typeof p === "object" && p.command) {
-                return {command: p.command, arguments: p.arguments};
-              }
-              return null;
-            }).filter((p): p is ParallelCommand => p !== null);
-          } else if (typeof parallel === "string") {
-            parallelArr = parallel.split(",").map((s) => ({command: s.trim()})).filter((p) => p.command);
-          }
-        }
-
-        manifest[name] = {
-          return: returnArr,
-          parallel: parallelArr,
-          agent: fm.agent as string | undefined,
-          description: fm.description as string | undefined,
-          template: getTemplateBody(content),
-        };
-      }
-    } catch {}
-  }
-  return manifest;
-}
-
+// Session state
 let configs: Record<string, CommandConfig> = {};
 let pluginConfig: Subtask2Config = {replace_generic: true};
 let client: any = null;
@@ -154,26 +22,197 @@ const callState = new Map<string, string>();
 const returnState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
 const pendingNonSubtaskReturns = new Map<string, string[]>();
+const pipedArgsQueue = new Map<string, string[]>();
+const returnArgsState = pipedArgsQueue; // alias for backward compat
+const sessionMainCommand = new Map<string, string>();
+const executedReturns = new Set<string>();
 let hasActiveSubtask = false;
 
 const OPENCODE_GENERIC =
   "Summarize the task tool output above and continue with your task.";
 
+async function flattenParallels(
+  parallels: ParallelCommand[],
+  mainArgs: string,
+  sessionID: string,
+  visited: Set<string> = new Set(),
+  depth: number = 0,
+  maxDepth: number = 5
+): Promise<SubtaskPart[]> {
+  if (depth > maxDepth) return [];
+
+  const queue = pipedArgsQueue.get(sessionID) ?? [];
+  log(`flattenParallels called:`, {
+    depth,
+    parallels: parallels.map(
+      (p) => `${p.command}${p.arguments ? ` (args: ${p.arguments})` : ""}`
+    ),
+    mainArgs,
+    queueRemaining: [...queue],
+  });
+
+  const parts: SubtaskPart[] = [];
+
+  for (let i = 0; i < parallels.length; i++) {
+    const parallelCmd = parallels[i];
+    if (visited.has(parallelCmd.command)) continue;
+    visited.add(parallelCmd.command);
+
+    const cmdFile = await loadCommandFile(parallelCmd.command);
+    if (!cmdFile) continue;
+
+    const fm = parseFrontmatter(cmdFile.content);
+    let template = getTemplateBody(cmdFile.content);
+
+    // Priority: piped arg (from queue) > frontmatter args > main args
+    const pipeArg = queue.shift();
+    const args = pipeArg ?? parallelCmd.arguments ?? mainArgs;
+    log(
+      `Parallel ${parallelCmd.command}: using args="${args}" (pipeArg=${pipeArg}, fmArg=${parallelCmd.arguments}, mainArgs=${mainArgs})`
+    );
+    template = template.replace(/\$ARGUMENTS/g, args);
+
+    // Parse model string "provider/model" into {providerID, modelID}
+    let model: {providerID: string; modelID: string} | undefined;
+    if (typeof fm.model === "string" && fm.model.includes("/")) {
+      const [providerID, ...rest] = fm.model.split("/");
+      model = {providerID, modelID: rest.join("/")};
+    }
+
+    parts.push({
+      type: "subtask" as const,
+      agent: (fm.agent as string) || "general",
+      model,
+      description:
+        (fm.description as string) || `Parallel: ${parallelCmd.command}`,
+      command: parallelCmd.command,
+      prompt: template,
+    });
+
+    // Recursively flatten nested parallels
+    const nestedParallel = fm.parallel;
+    if (nestedParallel) {
+      const nestedArr = parseParallelConfig(nestedParallel);
+
+      if (nestedArr.length) {
+        const nestedParts = await flattenParallels(
+          nestedArr,
+          args,
+          sessionID,
+          visited,
+          depth + 1,
+          maxDepth
+        );
+        parts.push(...nestedParts);
+      }
+    }
+  }
+
+  return parts;
+}
+
 const plugin: Plugin = async (ctx) => {
   configs = await buildManifest();
   pluginConfig = await loadConfig();
   client = ctx.client;
+  clearLog();
+  log("Plugin initialized, configs:", Object.keys(configs));
+
+  // Helper to execute a return item (command or prompt)
+  async function executeReturn(item: string, sessionID: string) {
+    log(`executeReturn called: item=${item}, sessionID=${sessionID}`);
+
+    // Dedup check to prevent double execution
+    const key = `${sessionID}:${item}`;
+    if (executedReturns.has(key)) {
+      log(`executeReturn skipped (already executed): ${key}`);
+      return;
+    }
+    executedReturns.add(key);
+
+    if (item.startsWith("/")) {
+      // Parse /command args syntax
+      const [cmdName, ...argParts] = item.slice(1).split(/\s+/);
+      let args = argParts.join(" ");
+      const inlineArgs = args;
+
+      // Check if we have piped args for this return command
+      const returnArgs = returnArgsState.get(sessionID);
+      log(
+        `executeReturn /command: cmdName=${cmdName}, inlineArgs="${inlineArgs}", returnArgsState=`,
+        returnArgs
+      );
+
+      if (returnArgs?.length) {
+        const pipeArg = returnArgs.shift();
+        if (!returnArgs.length) returnArgsState.delete(sessionID);
+        if (pipeArg) args = pipeArg;
+        log(`executeReturn: using pipeArg="${pipeArg}" instead of inlineArgs`);
+      }
+
+      log(`executeReturn: final args="${args}"`);
+
+      // Update main command to this chained command so its own return is processed
+      log(
+        `executeReturn: setting mainCmd to ${cmdName} for session ${sessionID}`
+      );
+      sessionMainCommand.set(sessionID, cmdName);
+
+      try {
+        await client.session.command({
+          path: {id: sessionID},
+          body: {command: cmdName, arguments: args || ""},
+        });
+        log(`executeReturn: command ${cmdName} completed`);
+      } catch (e) {
+        log(`executeReturn: command ${cmdName} FAILED:`, e);
+      }
+    } else {
+      log(`executeReturn: sending prompt: ${item.substring(0, 50)}...`);
+      await client.session.promptAsync({
+        path: {id: sessionID},
+        body: {parts: [{type: "text", text: item}]},
+      });
+    }
+  }
 
   return {
-    "command.execute.before": async (input: {command: string; sessionID: string; arguments: string}, output: {parts: any[]}) => {
+    "command.execute.before": async (
+      input: {command: string; sessionID: string; arguments: string},
+      output: {parts: any[]}
+    ) => {
       const cmd = input.command;
       const config = configs[cmd];
-      
-      // Parse pipe-separated arguments: main args || parallel1 args || parallel2 args
+      sessionMainCommand.set(input.sessionID, cmd);
+      log(
+        `command.execute.before: cmd=${cmd}, sessionID=${input.sessionID}, hasConfig=${!!config}`
+      );
+
+      // Parse pipe-separated arguments: main || arg1 || arg2 || arg3 ...
       const argSegments = input.arguments.split("||").map((s) => s.trim());
       const mainArgs = argSegments[0] || "";
-      const parallelArgs = argSegments.slice(1);
-      
+
+      // Store ALL piped args (after main) in a shared queue
+      const allPipedArgs = argSegments.slice(1);
+
+      log(`Pipe args parsing:`, {
+        fullArgs: input.arguments,
+        argSegments,
+        mainArgs,
+        allPipedArgs,
+        configParallel: config?.parallel,
+        configReturn: config?.return,
+      });
+
+      // Store piped args for consumption by parallels and return commands
+      if (allPipedArgs.length) {
+        pipedArgsQueue.set(input.sessionID, allPipedArgs);
+        log(
+          `Stored pipedArgsQueue for session ${input.sessionID}:`,
+          allPipedArgs
+        );
+      }
+
       // Fix main command's parts to use only mainArgs (not the full pipe string)
       if (argSegments.length > 1) {
         for (const part of output.parts) {
@@ -185,52 +224,43 @@ const plugin: Plugin = async (ctx) => {
           }
         }
       }
-      
+
       // Track non-subtask commands with return for later injection
-      const hasSubtaskPart = output.parts.some((p: any) => p.type === "subtask");
+      const hasSubtaskPart = output.parts.some(
+        (p: any) => p.type === "subtask"
+      );
       if (!hasSubtaskPart && config?.return?.length) {
         pendingNonSubtaskReturns.set(input.sessionID, [...config.return]);
       }
-      
+
       if (!config?.parallel?.length) return;
 
-      for (let i = 0; i < config.parallel.length; i++) {
-        const parallelCmd = config.parallel[i];
-        const cmdFile = await loadCommandFile(parallelCmd.command);
-        if (!cmdFile) continue;
-
-        const fm = parseFrontmatter(cmdFile.content);
-        let template = getTemplateBody(cmdFile.content);
-        
-        // Priority: pipe args > frontmatter args > main args
-        const args = parallelArgs[i] ?? parallelCmd.arguments ?? mainArgs;
-        template = template.replace(/\$ARGUMENTS/g, args);
-
-        // Parse model string "provider/model" into {providerID, modelID}
-        let model: {providerID: string, modelID: string} | undefined;
-        if (typeof fm.model === "string" && fm.model.includes("/")) {
-          const [providerID, ...rest] = fm.model.split("/");
-          model = { providerID, modelID: rest.join("/") };
-        }
-
-        output.parts.push({
-          type: "subtask" as const,
-          agent: (fm.agent as string) || "general",
-          model,
-          description: (fm.description as string) || `Parallel: ${parallelCmd.command}`,
-          command: parallelCmd.command,
-          prompt: template,
-        });
-      }
+      // Recursively flatten all nested parallels
+      const parallelParts = await flattenParallels(
+        config.parallel,
+        mainArgs,
+        input.sessionID
+      );
+      output.parts.push(...parallelParts);
     },
 
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "task") return;
       hasActiveSubtask = true;
       const cmd = output.args?.command;
+      const mainCmd = sessionMainCommand.get(input.sessionID);
+      log(
+        `tool.execute.before: cmd=${cmd}, mainCmd=${mainCmd}, sessionID=${input.sessionID}`
+      );
+
       if (cmd && configs[cmd]) {
+        if (cmd === mainCmd) {
+          pendingNonSubtaskReturns.delete(input.sessionID);
+        }
+
         callState.set(input.callID, cmd);
-        if (configs[cmd].return.length > 1) {
+
+        if (cmd === mainCmd && configs[cmd].return.length > 1) {
           returnState.set(input.sessionID, [...configs[cmd].return.slice(1)]);
         }
       }
@@ -240,54 +270,106 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
       callState.delete(input.callID);
-      if (cmd && configs[cmd]?.return?.length) {
+
+      const mainCmd = sessionMainCommand.get(input.sessionID);
+
+      log(
+        `tool.execute.after: cmd=${cmd}, mainCmd=${mainCmd}, hasReturn=${!!(
+          cmd && configs[cmd]?.return?.length
+        )}`
+      );
+
+      if (cmd && cmd === mainCmd && configs[cmd]?.return?.length) {
+        log(
+          `Setting pendingReturn for session ${input.sessionID}: ${configs[cmd].return[0]}`
+        );
         pendingReturns.set(input.sessionID, configs[cmd].return[0]);
       }
     },
 
-    "experimental.chat.messages.transform": async (_input, output) => {
-      for (const msg of output.messages) {
+    "experimental.chat.messages.transform": async (input, output) => {
+      log(
+        `messages.transform called, pendingReturns keys:`,
+        Array.from(pendingReturns.keys()),
+        `message count: ${output.messages.length}`
+      );
+
+      // Find the LAST message with OPENCODE_GENERIC
+      let lastGenericPart: any = null;
+      let lastGenericMsgIndex = -1;
+
+      for (let i = 0; i < output.messages.length; i++) {
+        const msg = output.messages[i];
         for (const part of msg.parts) {
           if (part.type === "text" && part.text === OPENCODE_GENERIC) {
-            for (const [sessionID, returnPrompt] of pendingReturns) {
-              part.text = returnPrompt;
-              pendingReturns.delete(sessionID);
-              hasActiveSubtask = false;
-              return;
-            }
-
-            if (hasActiveSubtask && pluginConfig.replace_generic) {
-              part.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;
-              hasActiveSubtask = false;
-              return;
-            }
+            lastGenericPart = part;
+            lastGenericMsgIndex = i;
           }
+        }
+      }
+
+      if (lastGenericPart) {
+        log(`Found LAST OPENCODE_GENERIC at msg[${lastGenericMsgIndex}]`);
+
+        // Check for pending return
+        for (const [sessionID, returnPrompt] of pendingReturns) {
+          log(
+            `Replacing with pendingReturn for session=${sessionID}, returnPrompt=${returnPrompt}`
+          );
+
+          if (returnPrompt.startsWith("/")) {
+            lastGenericPart.text = "";
+            log(`Set part.text to empty string, will execute command`);
+            executeReturn(returnPrompt, sessionID).catch(console.error);
+          } else {
+            lastGenericPart.text = returnPrompt;
+            log(
+              `Set part.text to: "${lastGenericPart.text}", verification: ${
+                lastGenericPart.text === returnPrompt
+              }`
+            );
+          }
+          pendingReturns.delete(sessionID);
+          hasActiveSubtask = false;
+          log(
+            `After replacement, pendingReturns keys:`,
+            Array.from(pendingReturns.keys())
+          );
+          return;
+        }
+
+        // No pending return found, use generic replacement if configured
+        log(`No pendingReturn found, hasActiveSubtask=${hasActiveSubtask}`);
+        if (hasActiveSubtask && pluginConfig.replace_generic) {
+          log(
+            `Using default replacement: ${
+              pluginConfig.generic_return ?? DEFAULT_PROMPT
+            }`
+          );
+          lastGenericPart.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;
+          hasActiveSubtask = false;
+          return;
         }
       }
     },
 
     "experimental.text.complete": async (input) => {
-      // Handle non-subtask command returns (inject as follow-up message)
+      // Handle non-subtask command returns
       const pendingReturn = pendingNonSubtaskReturns.get(input.sessionID);
       if (pendingReturn?.length && client) {
         const next = pendingReturn.shift()!;
-        if (!pendingReturn.length) pendingNonSubtaskReturns.delete(input.sessionID);
-        await client.session.promptAsync({
-          path: {id: input.sessionID},
-          body: {parts: [{type: "text", text: next}]},
-        });
+        if (!pendingReturn.length)
+          pendingNonSubtaskReturns.delete(input.sessionID);
+        executeReturn(next, input.sessionID).catch(console.error);
         return;
       }
 
-      // Handle remaining returns (formerly chain)
+      // Handle remaining returns
       const remaining = returnState.get(input.sessionID);
       if (!remaining?.length || !client) return;
       const next = remaining.shift()!;
       if (!remaining.length) returnState.delete(input.sessionID);
-      await client.session.promptAsync({
-        path: {id: input.sessionID},
-        body: {parts: [{type: "text", text: next}]},
-      });
+      executeReturn(next, input.sessionID).catch(console.error);
     },
   };
 };
