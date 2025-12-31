@@ -102,7 +102,9 @@ For multiple sequential prompts, use an array:
 ```yaml
 ---
 subtask: true
-return: [Implement the fix, Run the tests]
+return:
+  - Implement the fix
+  - Run the tests
 ---
 Find the bug in auth.ts
 ```
@@ -133,7 +135,9 @@ Spawn additional command subtasks alongside the main one:
 ```yaml
 ---
 subtask: true
-parallel: /security-review, /perf-review
+parallel:
+  - /security-review
+  - /perf-review
 return:
   - Synthesize all review results and create a unified action plan
   - Critically review the plan directly against the codebase, then revise or implement
