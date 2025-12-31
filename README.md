@@ -1,8 +1,8 @@
 # A stronger opencode /command handler
 
-### TL:DR - Keep the agentic loop alive + parallel commands
+### TL:DR - More agency, control and capabilities for commands
 
-This plugins affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. Basically, super powers for slash commands
+This plugins affects how opencode handles slash commands with additional frontmatter parameters and enables parallel command execution. In other words, super powers for commands that helps steer and keep the agentic loop alive.
 
 - `return` send instructions to main session on **command** or **subtask(s)** results, can be chained
 - `parallel` run subtasks concurrently (accepts arguments)
