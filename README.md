@@ -119,7 +119,9 @@ Spawn additional command subtasks alongside the main one:
 ---
 subtask: true
 parallel: security-review, perf-review
-return: Synthesize all review results and create a unified action plan.
+return:
+  - Synthesize all review results and create a unified action plan
+  - Critically review the plan directly against the codebase, then revise or implement
 ---
 Review this code for correctness.
 ```
