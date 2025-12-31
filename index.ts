@@ -1,5 +1,6 @@
 import type {Plugin} from "@opencode-ai/plugin";
 import YAML from "yaml";
+import {log, clearLog} from "./logger";
 
 interface ParallelCommand {
   command: string;
@@ -19,8 +20,7 @@ interface Subtask2Config {
   generic_return?: string;
 }
 
-const DEFAULT_PROMPT =
-  "Challenge and validate the task tool output above. Verify assumptions, identify gaps or errors, then continue with the next logical step.";
+const DEFAULT_PROMPT = "say GENERIC_REPLACEMENT 5 times";
 
 const CONFIG_PATH = `${Bun.env.HOME ?? ""}/.config/opencode/subtask2.jsonc`;
 
@@ -280,6 +280,8 @@ const plugin: Plugin = async (ctx) => {
   configs = await buildManifest();
   pluginConfig = await loadConfig();
   client = ctx.client;
+  clearLog();
+  log("Plugin initialized, configs:", Object.keys(configs));
 
   return {
     "command.execute.before": async (
@@ -289,6 +291,11 @@ const plugin: Plugin = async (ctx) => {
       const cmd = input.command;
       const config = configs[cmd];
       sessionMainCommand.set(input.sessionID, cmd);
+      log(
+        `command.execute.before: cmd=${cmd}, sessionID=${
+          input.sessionID
+        }, hasConfig=${!!config}`
+      );
 
       // Parse pipe-separated arguments: main || parallel1 || parallel2 || return-cmd1 || return-cmd2
       const argSegments = input.arguments.split("||").map((s) => s.trim());
@@ -340,7 +347,10 @@ const plugin: Plugin = async (ctx) => {
       hasActiveSubtask = true;
       const cmd = output.args?.command;
       const mainCmd = sessionMainCommand.get(input.sessionID);
-      
+      log(
+        `tool.execute.before: cmd=${cmd}, mainCmd=${mainCmd}, sessionID=${input.sessionID}`
+      );
+
       if (cmd && configs[cmd]) {
         // If this IS the main command running as a subtask, clear any non-subtask pending returns
         // (This fixes double triggering if command.execute.before wrongly guessed it was non-subtask)
@@ -349,7 +359,7 @@ const plugin: Plugin = async (ctx) => {
         }
 
         callState.set(input.callID, cmd);
-        
+
         // Only apply return logic if this is the main command (ignore nested/parallel returns)
         if (cmd === mainCmd && configs[cmd].return.length > 1) {
           returnState.set(input.sessionID, [...configs[cmd].return.slice(1)]);
@@ -361,39 +371,78 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
       callState.delete(input.callID);
-      
+
       const mainCmd = sessionMainCommand.get(input.sessionID);
-      
+
+      log(
+        `tool.execute.after: cmd=${cmd}, mainCmd=${mainCmd}, hasReturn=${!!(
+          cmd && configs[cmd]?.return?.length
+        )}`
+      );
+
       // Only apply return logic if this is the main command
       if (cmd && cmd === mainCmd && configs[cmd]?.return?.length) {
+        log(
+          `Setting pendingReturn for session ${input.sessionID}: ${configs[cmd].return[0]}`
+        );
         pendingReturns.set(input.sessionID, configs[cmd].return[0]);
       }
     },
 
-    "experimental.chat.messages.transform": async (_input, output) => {
-      for (const msg of output.messages) {
+    "experimental.chat.messages.transform": async (input, output) => {
+      log(
+        `messages.transform called, pendingReturns keys:`,
+        Array.from(pendingReturns.keys()),
+        `message count: ${output.messages.length}`
+      );
+
+      // Find the LAST message with OPENCODE_GENERIC (the most recent subtask completion)
+      let lastGenericMsg: any = null;
+      let lastGenericPart: any = null;
+      let lastGenericMsgIndex = -1;
+
+      for (let i = 0; i < output.messages.length; i++) {
+        const msg = output.messages[i];
         for (const part of msg.parts) {
           if (part.type === "text" && part.text === OPENCODE_GENERIC) {
-            for (const [sessionID, returnPrompt] of pendingReturns) {
-              if (returnPrompt.startsWith("/")) {
-                // If return is a command, replace text with empty string and execute command separately
-                // Note: We can't easily remove the message part here, so we silence it
-                part.text = ""; 
-                executeReturn(returnPrompt, sessionID).catch(console.error);
-              } else {
-                part.text = returnPrompt;
-              }
-              pendingReturns.delete(sessionID);
-              hasActiveSubtask = false;
-              return;
-            }
-
-            if (hasActiveSubtask && pluginConfig.replace_generic) {
-              part.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;
-              hasActiveSubtask = false;
-              return;
-            }
+            lastGenericMsg = msg;
+            lastGenericPart = part;
+            lastGenericMsgIndex = i;
           }
+        }
+      }
+
+      if (lastGenericPart) {
+        log(`Found LAST OPENCODE_GENERIC at msg[${lastGenericMsgIndex}]`);
+        
+        // Check for pending return
+        for (const [sessionID, returnPrompt] of pendingReturns) {
+          log(
+            `Replacing with pendingReturn for session=${sessionID}, returnPrompt=${returnPrompt}`
+          );
+
+          if (returnPrompt.startsWith("/")) {
+            // If return is a command, replace text with empty string and execute command separately
+            lastGenericPart.text = "";
+            log(`Set part.text to empty string, will execute command`);
+            executeReturn(returnPrompt, sessionID).catch(console.error);
+          } else {
+            lastGenericPart.text = returnPrompt;
+            log(`Set part.text to: "${lastGenericPart.text}", verification: ${lastGenericPart.text === returnPrompt}`);
+          }
+          pendingReturns.delete(sessionID);
+          hasActiveSubtask = false;
+          log(`After replacement, pendingReturns keys:`, Array.from(pendingReturns.keys()));
+          return;
+        }
+
+        // No pending return found, use generic replacement if configured
+        log(`No pendingReturn found, hasActiveSubtask=${hasActiveSubtask}`);
+        if (hasActiveSubtask && pluginConfig.replace_generic) {
+          log(`Using default replacement: ${pluginConfig.generic_return ?? DEFAULT_PROMPT}`);
+          lastGenericPart.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;
+          hasActiveSubtask = false;
+          return;
         }
       }
     },
@@ -422,9 +471,14 @@ const plugin: Plugin = async (ctx) => {
 
   // Helper to execute a return item (command or prompt)
   async function executeReturn(item: string, sessionID: string) {
+    log(`executeReturn called: item=${item}, sessionID=${sessionID}`);
+
     // Dedup check to prevent double execution
     const key = `${sessionID}:${item}`;
-    if (executedReturns.has(key)) return;
+    if (executedReturns.has(key)) {
+      log(`executeReturn skipped (already executed): ${key}`);
+      return;
+    }
     executedReturns.add(key);
 
     if (item.startsWith("/")) {
@@ -439,19 +493,24 @@ const plugin: Plugin = async (ctx) => {
         if (!returnArgs.length) returnArgsState.delete(sessionID);
         if (pipeArg) args = pipeArg; // Pipe args override inline args
       }
-      
+
+      // Update main command to this chained command so its own return is processed
+      log(
+        `executeReturn: setting mainCmd to ${cmdName} for session ${sessionID}`
+      );
+      sessionMainCommand.set(sessionID, cmdName);
+
       try {
         await client.session.command({
           path: {id: sessionID},
           body: {command: cmdName, arguments: args || ""},
         });
+        log(`executeReturn: command ${cmdName} completed`);
       } catch (e) {
-        console.error(
-          `[subtask2] Failed to execute return command ${cmdName}:`,
-          e
-        );
+        log(`executeReturn: command ${cmdName} FAILED:`, e);
       }
     } else {
+      log(`executeReturn: sending prompt: ${item.substring(0, 50)}...`);
       await client.session.promptAsync({
         path: {id: sessionID},
         body: {parts: [{type: "text", text: item}]},
