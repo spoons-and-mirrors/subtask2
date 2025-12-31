@@ -154,14 +154,6 @@ Design a new auth system for $ARGUMENTS
 
 **Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their `return` are ignored — only the parent's `return` applies.
 
-**Tip:** If all commands share the same arguments, use the simple syntax:
-
-```yaml
-parallel: research-docs, research-codebase, security-audit
-```
-
-All three inherit the main command's `$ARGUMENTS`.
-
 **Tip:** You can also pass arguments inline using `||` separator:
 
 ```bash
@@ -169,6 +161,14 @@ All three inherit the main command's `$ARGUMENTS`.
 ```
 
 **Priority is** `pipe args > frontmatter args > inherit main args`
+
+**Tip:** If all commands share the same arguments, use the simple syntax:
+
+```yaml
+parallel: research-docs, research-codebase, security-audit
+```
+
+All three inherit the main command's `$ARGUMENTS`.
 
 ### 3. Global fallback - 'Better' default for subtasks
 
