@@ -107,7 +107,7 @@ Find the bug in auth.ts
 ```
 
 - **First** `return` replaces (cf 3. Subtask `return` fallback) opencode's "summarize" message (for `subtask: true`) or fires as follow-up (for non-subtasks)
-- **Additional** `returns` fire sequentially after each LLM turn completes
+- **Any additional** `return` fire sequentially after each LLM turn completes
 
 **Note:** For non-subtask commands, requires opencode with `command.execute.before` hook (pending PR).
 
