@@ -269,6 +269,7 @@ const returnState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
 const pendingNonSubtaskReturns = new Map<string, string[]>();
 const returnArgsState = new Map<string, string[]>(); // args for /commands in return
+const sessionMainCommand = new Map<string, string>(); // sessionID -> mainCmdName
 const executedReturns = new Set<string>(); // dedup check
 let hasActiveSubtask = false;
 
@@ -287,6 +288,7 @@ const plugin: Plugin = async (ctx) => {
     ) => {
       const cmd = input.command;
       const config = configs[cmd];
+      sessionMainCommand.set(input.sessionID, cmd);
 
       // Parse pipe-separated arguments: main || parallel1 || parallel2 || return-cmd1 || return-cmd2
       const argSegments = input.arguments.split("||").map((s) => s.trim());
@@ -337,9 +339,19 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       hasActiveSubtask = true;
       const cmd = output.args?.command;
+      const mainCmd = sessionMainCommand.get(input.sessionID);
+      
       if (cmd && configs[cmd]) {
+        // If this IS the main command running as a subtask, clear any non-subtask pending returns
+        // (This fixes double triggering if command.execute.before wrongly guessed it was non-subtask)
+        if (cmd === mainCmd) {
+          pendingNonSubtaskReturns.delete(input.sessionID);
+        }
+
         callState.set(input.callID, cmd);
-        if (configs[cmd].return.length > 1) {
+        
+        // Only apply return logic if this is the main command (ignore nested/parallel returns)
+        if (cmd === mainCmd && configs[cmd].return.length > 1) {
           returnState.set(input.sessionID, [...configs[cmd].return.slice(1)]);
         }
       }
@@ -349,7 +361,11 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
       callState.delete(input.callID);
-      if (cmd && configs[cmd]?.return?.length) {
+      
+      const mainCmd = sessionMainCommand.get(input.sessionID);
+      
+      // Only apply return logic if this is the main command
+      if (cmd && cmd === mainCmd && configs[cmd]?.return?.length) {
         pendingReturns.set(input.sessionID, configs[cmd].return[0]);
       }
     },
@@ -359,7 +375,14 @@ const plugin: Plugin = async (ctx) => {
         for (const part of msg.parts) {
           if (part.type === "text" && part.text === OPENCODE_GENERIC) {
             for (const [sessionID, returnPrompt] of pendingReturns) {
-              part.text = returnPrompt;
+              if (returnPrompt.startsWith("/")) {
+                // If return is a command, replace text with empty string and execute command separately
+                // Note: We can't easily remove the message part here, so we silence it
+                part.text = ""; 
+                executeReturn(returnPrompt, sessionID).catch(console.error);
+              } else {
+                part.text = returnPrompt;
+              }
               pendingReturns.delete(sessionID);
               hasActiveSubtask = false;
               return;
@@ -376,45 +399,6 @@ const plugin: Plugin = async (ctx) => {
     },
 
     "experimental.text.complete": async (input) => {
-      // Helper to execute a return item (command or prompt)
-      async function executeReturn(item: string, sessionID: string) {
-        // Dedup check to prevent double execution
-        const key = `${sessionID}:${item}`;
-        if (executedReturns.has(key)) return;
-        executedReturns.add(key);
-
-        if (item.startsWith("/")) {
-          // Parse /command args syntax
-          const [cmdName, ...argParts] = item.slice(1).split(/\s+/);
-          let args = argParts.join(" ");
-
-          // Check if we have piped args for this return command
-          const returnArgs = returnArgsState.get(sessionID);
-          if (returnArgs?.length) {
-            const pipeArg = returnArgs.shift();
-            if (!returnArgs.length) returnArgsState.delete(sessionID);
-            if (pipeArg) args = pipeArg; // Pipe args override inline args
-          }
-          
-          try {
-            await client.session.command({
-              path: {id: sessionID},
-              body: {command: cmdName, arguments: args || ""},
-            });
-          } catch (e) {
-            console.error(
-              `[subtask2] Failed to execute return command ${cmdName}:`,
-              e
-            );
-          }
-        } else {
-          await client.session.promptAsync({
-            path: {id: sessionID},
-            body: {parts: [{type: "text", text: item}]},
-          });
-        }
-      }
-
       // Handle non-subtask command returns (inject as follow-up)
       const pendingReturn = pendingNonSubtaskReturns.get(input.sessionID);
       if (pendingReturn?.length && client) {
@@ -435,6 +419,45 @@ const plugin: Plugin = async (ctx) => {
       executeReturn(next, input.sessionID).catch(console.error);
     },
   };
+
+  // Helper to execute a return item (command or prompt)
+  async function executeReturn(item: string, sessionID: string) {
+    // Dedup check to prevent double execution
+    const key = `${sessionID}:${item}`;
+    if (executedReturns.has(key)) return;
+    executedReturns.add(key);
+
+    if (item.startsWith("/")) {
+      // Parse /command args syntax
+      const [cmdName, ...argParts] = item.slice(1).split(/\s+/);
+      let args = argParts.join(" ");
+
+      // Check if we have piped args for this return command
+      const returnArgs = returnArgsState.get(sessionID);
+      if (returnArgs?.length) {
+        const pipeArg = returnArgs.shift();
+        if (!returnArgs.length) returnArgsState.delete(sessionID);
+        if (pipeArg) args = pipeArg; // Pipe args override inline args
+      }
+      
+      try {
+        await client.session.command({
+          path: {id: sessionID},
+          body: {command: cmdName, arguments: args || ""},
+        });
+      } catch (e) {
+        console.error(
+          `[subtask2] Failed to execute return command ${cmdName}:`,
+          e
+        );
+      }
+    } else {
+      await client.session.promptAsync({
+        path: {id: sessionID},
+        body: {parts: [{type: "text", text: item}]},
+      });
+    }
+  }
 };
 
 export default plugin;
