@@ -162,12 +162,22 @@ interface SubtaskPart {
 async function flattenParallels(
   parallels: ParallelCommand[],
   mainArgs: string,
-  parallelArgs: string[],
+  sessionID: string,
   visited: Set<string> = new Set(),
   depth: number = 0,
   maxDepth: number = 5
 ): Promise<SubtaskPart[]> {
   if (depth > maxDepth) return [];
+
+  const queue = pipedArgsQueue.get(sessionID) ?? [];
+  log(`flattenParallels called:`, {
+    depth,
+    parallels: parallels.map(
+      (p) => `${p.command}${p.arguments ? ` (args: ${p.arguments})` : ""}`
+    ),
+    mainArgs,
+    queueRemaining: [...queue],
+  });
 
   const parts: SubtaskPart[] = [];
 
@@ -182,8 +192,12 @@ async function flattenParallels(
     const fm = parseFrontmatter(cmdFile.content);
     let template = getTemplateBody(cmdFile.content);
 
-    // Priority: pipe args > frontmatter args > main args
-    const args = parallelArgs[i] ?? parallelCmd.arguments ?? mainArgs;
+    // Priority: piped arg (from queue) > frontmatter args > main args
+    const pipeArg = queue.shift(); // consume from shared queue
+    const args = pipeArg ?? parallelCmd.arguments ?? mainArgs;
+    log(
+      `Parallel ${parallelCmd.command}: using args="${args}" (pipeArg=${pipeArg}, fmArg=${parallelCmd.arguments}, mainArgs=${mainArgs})`
+    );
     template = template.replace(/\$ARGUMENTS/g, args);
 
     // Parse model string "provider/model" into {providerID, modelID}
@@ -203,7 +217,7 @@ async function flattenParallels(
       prompt: template,
     });
 
-    // Recursively flatten nested parallels
+    // Recursively flatten nested parallels (they also consume from the same queue)
     const nestedParallel = fm.parallel;
     if (nestedParallel) {
       const nestedArr = parseParallelConfig(nestedParallel);
@@ -212,7 +226,7 @@ async function flattenParallels(
         const nestedParts = await flattenParallels(
           nestedArr,
           args,
-          [],
+          sessionID,
           visited,
           depth + 1,
           maxDepth
@@ -268,7 +282,8 @@ const callState = new Map<string, string>();
 const returnState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
 const pendingNonSubtaskReturns = new Map<string, string[]>();
-const returnArgsState = new Map<string, string[]>(); // args for /commands in return
+const pipedArgsQueue = new Map<string, string[]>(); // shared queue for all piped args (parallels + return commands)
+const returnArgsState = pipedArgsQueue; // alias for backward compat
 const sessionMainCommand = new Map<string, string>(); // sessionID -> mainCmdName
 const executedReturns = new Set<string>(); // dedup check
 let hasActiveSubtask = false;
@@ -297,18 +312,30 @@ const plugin: Plugin = async (ctx) => {
         }, hasConfig=${!!config}`
       );
 
-      // Parse pipe-separated arguments: main || parallel1 || parallel2 || return-cmd1 || return-cmd2
+      // Parse pipe-separated arguments: main || arg1 || arg2 || arg3 ...
+      // Args are consumed in order: parallels (depth-first), then return /commands
       const argSegments = input.arguments.split("||").map((s) => s.trim());
       const mainArgs = argSegments[0] || "";
 
-      // Count how many parallels we have to know where return args start
-      const parallelCount = config?.parallel?.length ?? 0;
-      const parallelArgs = argSegments.slice(1, 1 + parallelCount);
-      const returnArgs = argSegments.slice(1 + parallelCount);
+      // Store ALL piped args (after main) in a shared queue - consumed by parallels first, then return /commands
+      const allPipedArgs = argSegments.slice(1);
 
-      // Store return args for later use in executeReturn
-      if (returnArgs.length) {
-        returnArgsState.set(input.sessionID, returnArgs);
+      log(`Pipe args parsing:`, {
+        fullArgs: input.arguments,
+        argSegments,
+        mainArgs,
+        allPipedArgs,
+        configParallel: config?.parallel,
+        configReturn: config?.return,
+      });
+
+      // Store piped args for consumption by parallels and return commands
+      if (allPipedArgs.length) {
+        pipedArgsQueue.set(input.sessionID, allPipedArgs);
+        log(
+          `Stored pipedArgsQueue for session ${input.sessionID}:`,
+          allPipedArgs
+        );
       }
 
       // Fix main command's parts to use only mainArgs (not the full pipe string)
@@ -337,7 +364,7 @@ const plugin: Plugin = async (ctx) => {
       const parallelParts = await flattenParallels(
         config.parallel,
         mainArgs,
-        parallelArgs
+        input.sessionID
       );
       output.parts.push(...parallelParts);
     },
@@ -414,7 +441,7 @@ const plugin: Plugin = async (ctx) => {
 
       if (lastGenericPart) {
         log(`Found LAST OPENCODE_GENERIC at msg[${lastGenericMsgIndex}]`);
-        
+
         // Check for pending return
         for (const [sessionID, returnPrompt] of pendingReturns) {
           log(
@@ -428,18 +455,29 @@ const plugin: Plugin = async (ctx) => {
             executeReturn(returnPrompt, sessionID).catch(console.error);
           } else {
             lastGenericPart.text = returnPrompt;
-            log(`Set part.text to: "${lastGenericPart.text}", verification: ${lastGenericPart.text === returnPrompt}`);
+            log(
+              `Set part.text to: "${lastGenericPart.text}", verification: ${
+                lastGenericPart.text === returnPrompt
+              }`
+            );
           }
           pendingReturns.delete(sessionID);
           hasActiveSubtask = false;
-          log(`After replacement, pendingReturns keys:`, Array.from(pendingReturns.keys()));
+          log(
+            `After replacement, pendingReturns keys:`,
+            Array.from(pendingReturns.keys())
+          );
           return;
         }
 
         // No pending return found, use generic replacement if configured
         log(`No pendingReturn found, hasActiveSubtask=${hasActiveSubtask}`);
         if (hasActiveSubtask && pluginConfig.replace_generic) {
-          log(`Using default replacement: ${pluginConfig.generic_return ?? DEFAULT_PROMPT}`);
+          log(
+            `Using default replacement: ${
+              pluginConfig.generic_return ?? DEFAULT_PROMPT
+            }`
+          );
           lastGenericPart.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;
           hasActiveSubtask = false;
           return;
@@ -485,14 +523,23 @@ const plugin: Plugin = async (ctx) => {
       // Parse /command args syntax
       const [cmdName, ...argParts] = item.slice(1).split(/\s+/);
       let args = argParts.join(" ");
+      const inlineArgs = args;
 
       // Check if we have piped args for this return command
       const returnArgs = returnArgsState.get(sessionID);
+      log(
+        `executeReturn /command: cmdName=${cmdName}, inlineArgs="${inlineArgs}", returnArgsState=`,
+        returnArgs
+      );
+
       if (returnArgs?.length) {
         const pipeArg = returnArgs.shift();
         if (!returnArgs.length) returnArgsState.delete(sessionID);
         if (pipeArg) args = pipeArg; // Pipe args override inline args
+        log(`executeReturn: using pipeArg="${pipeArg}" instead of inlineArgs`);
       }
+
+      log(`executeReturn: final args="${args}"`);
 
       // Update main command to this chained command so its own return is processed
       log(
