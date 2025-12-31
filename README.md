@@ -1,13 +1,19 @@
 # subtask2 - an opencode plugin
 
-`@openspoon/subtask2` gives super powers to your slash commands with new frontmatter parameters and more...
+Give super powers to your slash commands with `@openspoon/subtask2`
 
-- `return` — Tell the main agent what to do with subtask results (not just "summarize")
-- `parallel` — To run multiple subtasks concurrently (accepts arguments)
-- `chain` — Queue follow-up prompts that fire automatically
-- 'better' defaults — Replace the generic "summarize" on subtask return with something that keeps the agent working or a custom generic prompt
+## TL:DR
 
-⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, and for proper model inheritance to work.
+This plugins affects how opencode handles commands with additional frontmatter parameters and enables parallel commands
+
+- `return` tells the main agent what to do with subtask(s) results (not just "summarize it")
+- `parallel` runs multiple subtasks concurrently (accepts arguments)
+- `chain` queues follow-up prompts that fire automatically (because why not)
+- 'better' defaults replace the generic opencode's "summarize..." on subtask completion with something that keeps the agent working, or a custom generic prompt
+
+See the [Examples](#quick-examples) section for ideas on what this unlocks.
+
+⚠️ Requires [this PR](https://github.com/sst/opencode/pull/6478) for `parallel` and non-subtask features, as well as proper model inheritance to work.
 
 ## Installation
 
@@ -143,7 +149,7 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
 ---
 
-## Quick Examples
+## Examples
 
 **Parallel: Same task, different models**
 
