@@ -7,8 +7,7 @@ interface ParallelCommand {
 }
 
 interface CommandConfig {
-  return?: string;
-  chain: string[];
+  return: string[];
   parallel: ParallelCommand[];
   agent?: string;
   description?: string;
@@ -115,8 +114,8 @@ async function buildManifest(): Promise<Record<string, CommandConfig>> {
         const name = file.replace(/\.md$/, "");
         const content = await Bun.file(`${dir}/${file}`).text();
         const fm = parseFrontmatter(content);
-        const chain = fm.chain;
-        const chainArr = chain ? (Array.isArray(chain) ? chain : [chain]) : [];
+        const returnVal = fm.return;
+        const returnArr = returnVal ? (Array.isArray(returnVal) ? returnVal : [returnVal]) : [];
         const parallel = fm.parallel;
         let parallelArr: ParallelCommand[] = [];
         if (parallel) {
@@ -136,8 +135,7 @@ async function buildManifest(): Promise<Record<string, CommandConfig>> {
         }
 
         manifest[name] = {
-          return: fm.return as string | undefined,
-          chain: chainArr,
+          return: returnArr,
           parallel: parallelArr,
           agent: fm.agent as string | undefined,
           description: fm.description as string | undefined,
@@ -153,9 +151,9 @@ let configs: Record<string, CommandConfig> = {};
 let pluginConfig: Subtask2Config = {replace_generic: true};
 let client: any = null;
 const callState = new Map<string, string>();
-const chainState = new Map<string, string[]>();
+const returnState = new Map<string, string[]>();
 const pendingReturns = new Map<string, string>();
-const pendingNonSubtaskReturns = new Map<string, string>();
+const pendingNonSubtaskReturns = new Map<string, string[]>();
 let hasActiveSubtask = false;
 
 const OPENCODE_GENERIC =
@@ -188,15 +186,10 @@ const plugin: Plugin = async (ctx) => {
         }
       }
       
-      // Track non-subtask commands with return/chain for later injection
+      // Track non-subtask commands with return for later injection
       const hasSubtaskPart = output.parts.some((p: any) => p.type === "subtask");
-      if (!hasSubtaskPart && config) {
-        if (config.return) {
-          pendingNonSubtaskReturns.set(input.sessionID, config.return);
-        }
-        if (config.chain.length) {
-          chainState.set(input.sessionID, [...config.chain]);
-        }
+      if (!hasSubtaskPart && config?.return?.length) {
+        pendingNonSubtaskReturns.set(input.sessionID, [...config.return]);
       }
       
       if (!config?.parallel?.length) return;
@@ -237,8 +230,8 @@ const plugin: Plugin = async (ctx) => {
       const cmd = output.args?.command;
       if (cmd && configs[cmd]) {
         callState.set(input.callID, cmd);
-        if (configs[cmd].chain.length) {
-          chainState.set(input.sessionID, [...configs[cmd].chain]);
+        if (configs[cmd].return.length > 1) {
+          returnState.set(input.sessionID, [...configs[cmd].return.slice(1)]);
         }
       }
     },
@@ -247,8 +240,8 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
       callState.delete(input.callID);
-      if (cmd && configs[cmd]?.return) {
-        pendingReturns.set(input.sessionID, configs[cmd].return);
+      if (cmd && configs[cmd]?.return?.length) {
+        pendingReturns.set(input.sessionID, configs[cmd].return[0]);
       }
     },
 
@@ -276,20 +269,21 @@ const plugin: Plugin = async (ctx) => {
     "experimental.text.complete": async (input) => {
       // Handle non-subtask command returns (inject as follow-up message)
       const pendingReturn = pendingNonSubtaskReturns.get(input.sessionID);
-      if (pendingReturn && client) {
-        pendingNonSubtaskReturns.delete(input.sessionID);
+      if (pendingReturn?.length && client) {
+        const next = pendingReturn.shift()!;
+        if (!pendingReturn.length) pendingNonSubtaskReturns.delete(input.sessionID);
         await client.session.promptAsync({
           path: {id: input.sessionID},
-          body: {parts: [{type: "text", text: pendingReturn}]},
+          body: {parts: [{type: "text", text: next}]},
         });
         return;
       }
 
-      // Handle chain
-      const chain = chainState.get(input.sessionID);
-      if (!chain?.length || !client) return;
-      const next = chain.shift()!;
-      if (!chain.length) chainState.delete(input.sessionID);
+      // Handle remaining returns (formerly chain)
+      const remaining = returnState.get(input.sessionID);
+      if (!remaining?.length || !client) return;
+      const next = remaining.shift()!;
+      if (!remaining.length) returnState.delete(input.sessionID);
       await client.session.promptAsync({
         path: {id: input.sessionID},
         body: {parts: [{type: "text", text: next}]},
