@@ -2,9 +2,13 @@
 
 # A stronger opencode /command handler
 
+![citation](media/quote.webp)
+
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables chaining as well as parallel command execution. It's simple to use and designed to allow better orchestration, steerability and lifespan of the agentic loop. Compose as simple or complex a workflow as you want. If you already know how opencode commands work, you'll be right at home.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables chaining as well as parallel command execution. It's simple to use and designed to allow better orchestration, steerability and lifespan of the agentic loop. Compose as simple or complex a workflow as you want. If you already know opencode commands, you'll be right at home.
+
+`@openspoon/subtask2@latest`
 
 ### Key features
 
@@ -260,15 +264,17 @@ say the word "$ARGUMENTS" 3 times
 
 </details>
 
----
-
+<details>
+<summary><strong>Installation</strong></summary>
 To install, add subtask2 to your opencode config plugin array
 
 ```json
 {
-  "plugins": ["@openspoon/subtask2"]
+  "plugins": ["@openspoon/subtask2@latest"]
 }
 ```
+
+</details>
 
 ---
 
