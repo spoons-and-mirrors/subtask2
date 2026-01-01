@@ -63,6 +63,8 @@ By default, opencode injects a user message after a `subtask: true` completes, a
 - **Any additional** `return` fire sequentially after each LLM turn completes
 - **Commands** (starting with `/`) are executed as full commands with their own `parallel` and `return`
 
+**Note:** The first `return` of a `subtask: true` command can NOT be a slash command as it subsitute the opencode injected message (as a string)
+
 ### 2. `parallel` - Run multiple subtasks concurrently ⚠️ **PENDING PR**
 
 Spawn additional command subtasks alongside the main one:
