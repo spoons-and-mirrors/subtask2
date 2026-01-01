@@ -2,7 +2,8 @@
 
 import type {Subtask2Config} from "./types";
 
-export const DEFAULT_PROMPT = "say GENERIC_REPLACEMENT 5 times";
+export const DEFAULT_PROMPT =
+  "Review, challenge and validate the task output against the codebase then continue with the next logical step.";
 
 const CONFIG_PATH = `${Bun.env.HOME ?? ""}/.config/opencode/subtask2.jsonc`;
 
