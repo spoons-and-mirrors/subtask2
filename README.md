@@ -60,7 +60,7 @@ Design the auth system for $ARGUMENTS
 By default, opencode injects a user message after a `subtask: true` completes, asking the model to "summarize the task tool output..." - Subtask2 replaces that message with the `return` prompt
 
 - **First** `return` replaces opencode's "summarize" message or fires as a follow-up
-- **Any additional** `return` fire sequentially after each LLM turn completes
+- **Any additional** `return` fire sequentially after each LLM turn completes - _accepts /commands_
 - **Commands** (starting with `/`) are executed as full commands with their own `parallel` and `return`
 
 **Note:** The first `return` of a `subtask: true` command cannot be a slash command as it subsitutes the opencode injected message (as a string)
