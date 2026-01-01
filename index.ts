@@ -136,6 +136,18 @@ const plugin: Plugin = async (ctx) => {
       let args = argParts.join(" ");
       const inlineArgs = args;
 
+      // Log the chained command's frontmatter
+      if (configs[cmdName]) {
+        log(`executeReturn: chained command "${cmdName}" config:`, {
+          return: configs[cmdName].return,
+          parallel: configs[cmdName].parallel,
+          agent: configs[cmdName].agent,
+          description: configs[cmdName].description,
+        });
+      } else {
+        log(`executeReturn: command "${cmdName}" not found in configs`);
+      }
+
       // Check if we have piped args for this return command
       const returnArgs = returnArgsState.get(sessionID);
       log(
@@ -248,6 +260,7 @@ const plugin: Plugin = async (ctx) => {
       if (input.tool !== "task") return;
       hasActiveSubtask = true;
       const cmd = output.args?.command;
+      const prompt = output.args?.prompt;
       let mainCmd = sessionMainCommand.get(input.sessionID);
       
       // If mainCmd is not set (command.execute.before didn't fire - no PR), 
@@ -256,6 +269,33 @@ const plugin: Plugin = async (ctx) => {
         sessionMainCommand.set(input.sessionID, cmd);
         mainCmd = cmd;
         log(`tool.execute.before: no mainCmd set, setting to ${cmd} (fallback for non-PR)`);
+        
+        // Log the command's frontmatter for debugging
+        log(`Command ${cmd} config:`, {
+          return: configs[cmd].return,
+          parallel: configs[cmd].parallel,
+          agent: configs[cmd].agent,
+          description: configs[cmd].description,
+        });
+        
+        // Parse piped args from prompt if present (fallback for non-PR)
+        // The prompt may contain "|| arg2 || arg3" if pipes were used
+        if (prompt && prompt.includes("||")) {
+          const pipeMatch = prompt.match(/\|\|(.+)/);
+          if (pipeMatch) {
+            const pipedPart = pipeMatch[1];
+            const pipedArgs = pipedPart.split("||").map((s: string) => s.trim()).filter(Boolean);
+            if (pipedArgs.length) {
+              pipedArgsQueue.set(input.sessionID, pipedArgs);
+              log(`Parsed piped args from prompt (fallback):`, pipedArgs);
+              
+              // Also fix the prompt to remove the piped args portion
+              const cleanPrompt = prompt.replace(/\s*\|\|.+$/, "").trim();
+              output.args.prompt = cleanPrompt;
+              log(`Cleaned prompt: "${cleanPrompt.substring(0, 100)}..."`);
+            }
+          }
+        }
         
         // Also set up return state since command.execute.before didn't run
         if (configs[cmd].return.length > 1) {
@@ -266,8 +306,20 @@ const plugin: Plugin = async (ctx) => {
       log(
         `tool.execute.before: cmd=${cmd}, mainCmd=${mainCmd}, sessionID=${input.sessionID}`
       );
+      log(`tool.execute.before: prompt preview: "${(prompt || "").substring(0, 150)}..."`);
+      log(`tool.execute.before: output.args:`, output.args);
 
       if (cmd && configs[cmd]) {
+        // Log command frontmatter for all commands passing through
+        if (cmd !== mainCmd) {
+          log(`tool.execute.before: command "${cmd}" config:`, {
+            return: configs[cmd].return,
+            parallel: configs[cmd].parallel,
+            agent: configs[cmd].agent,
+            description: configs[cmd].description,
+          });
+        }
+        
         if (cmd === mainCmd) {
           pendingNonSubtaskReturns.delete(input.sessionID);
         }
