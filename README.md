@@ -67,25 +67,27 @@ By default, opencode injects a user message after a `subtask: true` completes, a
 
 Spawn additional command subtasks alongside the main one:
 
+`plan.md`
+
 ```yaml
 subtask: true
 parallel:
-  - /security-review
-  - /perf-review
+  - /plan-gemini
+  - /plan-opus
 return:
-  - Synthesize all review results and create a unified action plan
-  - Critically review the plan directly against the codebase, then revise or implement
+  - Compare and challenge the plans, keep the best bits and make a unified proposal
+  - Critically review the plan directly against what reddit has to say about it
 ---
-Review this code for correctness.
+Plan a trip to $ARGUMENTS.
 ```
 
 This runs 3 subtasks in parallel:
 
-1. The main command (correctness review)
-2. `security-review` command
-3. `perf-review` command
+1. The main command (`plan.md`)
+2. `plan-gemini`
+3. `plan-opus`
 
-When ALL complete, the main session gets the `return` prompt of the main command
+When ALL complete, the main session receives the `return` prompt of the main command
 
 ### With custom arguments per command
 
