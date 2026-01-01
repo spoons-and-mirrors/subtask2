@@ -2,7 +2,7 @@
 
 ### TL:DR - More agency, control and capabilities for commands
 
-This plugin affects how opencode handles slash commands with additional frontmatter parameters and enables chaining as well as parallel command execution. It's simple to use and designed to allow better orchestration, steerability and lifespan of the agentic loop. Compose as simple or complex a workflow as you want. If you already know opencode commands, you'll be right at home.
+This plugin affects how opencode handles slash commands with additional frontmatter parameters which enables chaining as well as parallel command execution. It's simple to use and designed to allow better orchestration, steerability and lifespan of the agentic loop. Compose as simple or complex a workflow as you want. If you already know opencode commands, you'll be right at home.
 
 `@openspoon/subtask2@latest`
 
