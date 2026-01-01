@@ -4,7 +4,7 @@
 
 Subtask2 makes opencode commands into a powerful workflow orchestration system. Queue-up `prompts`, `commands`, `subtasks`, parallelize the parts you want and steer the agentic flow from start to finish.
 
-Compose as simple or complex a workflow as you want. If you already know opencode commands, you'll be right at home.
+Compose simple or complex workflows. If you already know opencode commands, you'll be right at home.
 
 `@openspoon/subtask2@latest`
 
