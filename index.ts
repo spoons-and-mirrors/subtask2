@@ -29,6 +29,8 @@ const pipedArgsQueue = new Map<string, string[]>();
 const returnArgsState = pipedArgsQueue; // alias for backward compat
 const sessionMainCommand = new Map<string, string>();
 const executedReturns = new Set<string>();
+// Track the first return prompt per session (replaces "Summarize..." in $SESSION)
+const firstReturnPrompt = new Map<string, string>();
 // Track parent session for commands called via executeReturn
 // Simple variable: set before command call, used by tool.execute.before
 let pendingParentSession: string | null = null;
@@ -98,15 +100,31 @@ async function fetchSessionMessages(
 
       for (const part of msg.parts) {
         if (part.type === "text" && part.text) {
+          // Replace the generic opencode summarize prompt with our first return prompt
+          if (part.text.startsWith("Summarize the task tool output")) {
+            const replacement = firstReturnPrompt.get(sessionID);
+            if (replacement) {
+              parts.push(replacement);
+            }
+            // If no replacement, skip it entirely
+            continue;
+          }
           parts.push(part.text);
         } else if (part.type === "tool" && part.state?.status === "completed") {
-          // Include completed tool results
+          // Include completed tool results (especially task tool for subtask content)
           const toolName = part.tool;
-          const output = part.state.output;
-          if (output && typeof output === "string" && output.length < 2000) {
-            parts.push(`[Tool: ${toolName}]\n${output}`);
-          } else {
-            parts.push(`[Tool: ${toolName} - output truncated]`);
+          let output = part.state.output;
+          if (output && typeof output === "string") {
+            // Strip <task_metadata> tags from task tool output
+            output = output.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "").trim();
+            if (output && output.length < 2000) {
+              // For task tool, just include the content directly (it's the subtask's response)
+              if (toolName === "task") {
+                parts.push(output);
+              } else {
+                parts.push(`[Tool: ${toolName}]\n${output}`);
+              }
+            }
           }
         }
       }
@@ -404,9 +422,13 @@ const plugin: Plugin = async (ctx) => {
         
         // Also set up return state since command.execute.before didn't run
         // Only do this once per session
-        if (cmdConfig.return.length > 1 && !returnState.has(input.sessionID)) {
-          returnState.set(input.sessionID, [...cmdConfig.return.slice(1)]);
-          log(`Set returnState: ${cmdConfig.return.slice(1).length} items`);
+        if (cmdConfig.return.length > 0 && !returnState.has(input.sessionID)) {
+          // Store the first return prompt (replaces "Summarize..." in $SESSION)
+          firstReturnPrompt.set(input.sessionID, cmdConfig.return[0]);
+          if (cmdConfig.return.length > 1) {
+            returnState.set(input.sessionID, [...cmdConfig.return.slice(1)]);
+            log(`Set returnState: ${cmdConfig.return.slice(1).length} items`);
+          }
         }
       }
       
