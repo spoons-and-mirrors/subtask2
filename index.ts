@@ -1,4 +1,5 @@
 import type {Plugin} from "@opencode-ai/plugin";
+import {tool} from "@opencode-ai/plugin";
 import type {
   CommandConfig,
   Subtask2Config,
@@ -334,6 +335,29 @@ const plugin: Plugin = async (ctx) => {
   }
 
   return {
+    tool: {
+      command: tool({
+        description: "Execute an opencode command",
+        args: {
+          command: tool.schema.string().describe("Command name (e.g. /plan)"),
+          arguments: tool.schema.string().optional().describe("Arguments to pass"),
+        },
+        async execute(args, context) {
+          const cmdName = args.command.replace(/^\//, "");
+          const allKeys = Object.keys(configs);
+          const pathKey = allKeys.find(k => k.includes('/') && k.endsWith('/' + cmdName)) || cmdName;
+          const ctx = context as any;
+          
+          if (!ctx.queueCommand) {
+            return "queueCommand not available - requires opencode PR";
+          }
+          
+          ctx.queueCommand(pathKey, args.arguments || "");
+          return `Queued /${cmdName}`;
+        },
+      }),
+    },
+
     "command.execute.before": async (
       input: {command: string; sessionID: string; arguments: string},
       output: {parts: any[]}
