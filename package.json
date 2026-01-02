@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@openspoon/subtask2",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "description": "Opencode plugin for enhanced subtask control with return context and prompt chaining",
   "main": "./dist/index.js",
