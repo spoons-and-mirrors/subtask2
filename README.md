@@ -1,16 +1,20 @@
-# A stronger opencode /command handler
+## A stronger opencode /command handler
 
-### Elevator pitch: more agency, control and capabilities for /commands
+![citation](media/image.webp)
 
-Subtask2 makes opencode commands into a powerful workflow orchestration system. Queue-up `prompts`, `commands`, `subtasks`, parallelize the parts you want and steer the agentic flow from start to finish.
+Subtask2 upgrades opencode commands to a powerful orchestration system. Instead of giving you an opiniated monster, it let's you build your own (but simple is fine too)
 
-Compose simple or complex workflows. If you already know opencode commands, you'll be right at home.
+This plugin allows your `/commands` to:
 
-`@openspoon/subtask2@latest`
+- Queue-up `prompts` or other `/commands` and `subagents` with arguments
+- Parallelize the parts you want,
+- Pass session content to subagents
+- Steer the agentic flow from start to finish
+
+If you already know opencode commands, you'll be right at home.
 
 ![subtask2 header](media/header.webp)
-
-![citation](media/quote.webp)
+`@openspoon/subtask2@latest`
 
 ### Key features
 
@@ -176,6 +180,7 @@ $SESSION[10]
 ```
 
 The syntax:
+
 - `$SESSION[12]` - last 12 messages (turns, not parts)
 - Each turn includes both user input and assistant response with all text parts
 
@@ -194,8 +199,9 @@ Can you show me an example?
 ```
 
 Works in:
+
 - Command body templates
-- Command arguments  
+- Command arguments
 - Parallel command prompts
 - Piped arguments (`||`)
 

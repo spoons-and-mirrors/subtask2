@@ -50,46 +50,58 @@ export function parseParallelConfig(parallel: unknown): ParallelCommand[] {
   return [];
 }
 
-// Regex to match $SESSION[n] patterns where n is a number
-const SESSION_PATTERN_SOURCE = "\\$SESSION\\[(\\d+)\\]";
+// $TURN[n] - last n messages
+// $TURN[:n] or $TURN[:n:m:o] - specific messages at indices (1-based from end)
+const TURN_LAST_N_PATTERN = "\\$TURN\\[(\\d+)\\]";
+const TURN_SPECIFIC_PATTERN = "\\$TURN\\[([:\\d]+)\\]";
 
-export interface SessionReference {
-  match: string;
-  count: number;
-}
+export type TurnReference = 
+  | { type: "lastN"; match: string; count: number }
+  | { type: "specific"; match: string; indices: number[] };
 
 /**
- * Extract all $SESSION[n] references from a string
- * Returns array of matches with their count values
+ * Extract all $TURN references from a string
+ * - $TURN[n] -> last n messages
+ * - $TURN[:n] or $TURN[:2:5:8] -> specific indices (1-based from end)
  */
-export function extractSessionReferences(text: string): SessionReference[] {
-  const refs: SessionReference[] = [];
-  const regex = new RegExp(SESSION_PATTERN_SOURCE, "g");
+export function extractTurnReferences(text: string): TurnReference[] {
+  const refs: TurnReference[] = [];
+  
+  // Match $TURN[...] patterns
+  const regex = /\$TURN\[([^\]]+)\]/g;
   let match: RegExpExecArray | null;
   
   while ((match = regex.exec(text)) !== null) {
-    refs.push({
-      match: match[0],
-      count: parseInt(match[1], 10),
-    });
+    const inner = match[1];
+    
+    if (inner.startsWith(":")) {
+      // Specific indices: $TURN[:2] or $TURN[:2:5:8]
+      const indices = inner.split(":").filter(Boolean).map(n => parseInt(n, 10));
+      if (indices.length > 0 && indices.every(n => !isNaN(n))) {
+        refs.push({ type: "specific", match: match[0], indices });
+      }
+    } else {
+      // Last N: $TURN[5]
+      const count = parseInt(inner, 10);
+      if (!isNaN(count)) {
+        refs.push({ type: "lastN", match: match[0], count });
+      }
+    }
   }
   return refs;
 }
 
 /**
- * Check if text contains any $SESSION[n] references
+ * Check if text contains any $TURN references
  */
-export function hasSessionReferences(text: string): boolean {
-  // Create a new regex each time to avoid global state issues
-  return new RegExp(SESSION_PATTERN_SOURCE).test(text);
+export function hasTurnReferences(text: string): boolean {
+  return /\$TURN\[[^\]]+\]/.test(text);
 }
 
 /**
- * Replace all $SESSION[n] references in text with the provided content map
- * @param text - Text containing $SESSION[n] patterns
- * @param replacements - Map of "$SESSION[n]" -> replacement text
+ * Replace all $TURN references in text with the provided content map
  */
-export function replaceSessionReferences(
+export function replaceTurnReferences(
   text: string,
   replacements: Map<string, string>
 ): string {
@@ -99,3 +111,9 @@ export function replaceSessionReferences(
   }
   return result;
 }
+
+// Keep old names as aliases for backward compat during transition
+export const extractSessionReferences = extractTurnReferences;
+export const hasSessionReferences = hasTurnReferences;
+export const replaceSessionReferences = replaceTurnReferences;
+export type SessionReference = TurnReference;

@@ -10,9 +10,9 @@ import {
   parseFrontmatter,
   getTemplateBody,
   parseParallelConfig,
-  extractSessionReferences,
-  hasSessionReferences,
-  replaceSessionReferences,
+  extractTurnReferences,
+  hasTurnReferences,
+  replaceTurnReferences,
 } from "./src/parser";
 import {loadCommandFile, buildManifest, getConfig} from "./src/commands";
 import {log, clearLog} from "./src/logger";
@@ -40,16 +40,19 @@ const OPENCODE_GENERIC =
   "Summarize the task tool output above and continue with your task.";
 
 /**
- * Fetch and format the last N messages from a session
- * Returns formatted text of the conversation turns
+ * Fetch and format session messages
+ * @param sessionID - The session to fetch from
+ * @param lastN - Get the last N messages (optional)
+ * @param specificIndices - Get specific messages by index from end, 1-based (optional)
  */
 async function fetchSessionMessages(
   sessionID: string,
-  count: number
+  lastN?: number,
+  specificIndices?: number[]
 ): Promise<string> {
   if (!client) {
     log("fetchSessionMessages: no client available");
-    return "[SESSION: client not available]";
+    return "[TURN: client not available]";
   }
 
   try {
@@ -61,7 +64,7 @@ async function fetchSessionMessages(
     log(`fetchSessionMessages: got ${messages?.length ?? 0} messages from ${sessionID}`);
     
     if (!messages?.length) {
-      return "[SESSION: no messages found]";
+      return "[TURN: no messages found]";
     }
 
     // Log all messages for debugging
@@ -73,7 +76,6 @@ async function fetchSessionMessages(
     })));
 
     // Filter out trailing empty messages (from current command being initiated)
-    // A message is "empty" if it has no text parts with content
     let effectiveMessages = messages;
     while (effectiveMessages.length > 0) {
       const last = effectiveMessages[effectiveMessages.length - 1];
@@ -89,12 +91,25 @@ async function fetchSessionMessages(
     }
     log(`After filtering empty trailing messages: ${effectiveMessages.length} (was ${messages.length})`);
 
-    // Get the last N messages (full turns)
-    const lastMessages = effectiveMessages.slice(-count);
-    log(`Using last ${count} messages`);
+    // Select messages based on mode
+    let selectedMessages: any[];
+    if (specificIndices && specificIndices.length > 0) {
+      // Specific indices mode: $TURN[:2:5:8] - indices are 1-based from end
+      selectedMessages = specificIndices
+        .map(idx => effectiveMessages[effectiveMessages.length - idx])
+        .filter(Boolean);
+      log(`Using specific indices [${specificIndices.join(',')}] -> ${selectedMessages.length} messages`);
+    } else if (lastN) {
+      // Last N mode: $TURN[5]
+      selectedMessages = effectiveMessages.slice(-lastN);
+      log(`Using last ${lastN} messages`);
+    } else {
+      selectedMessages = effectiveMessages;
+      log(`Using all ${selectedMessages.length} messages`);
+    }
 
     // Format each message with its parts
-    const formatted = lastMessages.map((msg: any) => {
+    const formatted = selectedMessages.map((msg: any) => {
       const role = msg.info.role.toUpperCase();
       const parts: string[] = [];
 
@@ -135,35 +150,39 @@ async function fetchSessionMessages(
     return formatted.join("\n\n");
   } catch (e) {
     log("fetchSessionMessages error:", e);
-    return `[SESSION: error fetching messages - ${e}]`;
+    return `[TURN: error fetching messages - ${e}]`;
   }
 }
 
 /**
- * Process a string and replace all $SESSION[n] references with actual session content
+ * Process a string and replace all $TURN references with actual session content
  */
-async function resolveSessionReferences(
+async function resolveTurnReferences(
   text: string,
   sessionID: string
 ): Promise<string> {
-  if (!hasSessionReferences(text)) {
+  if (!hasTurnReferences(text)) {
     return text;
   }
 
-  const refs = extractSessionReferences(text);
+  const refs = extractTurnReferences(text);
   if (!refs.length) return text;
 
-  // Dedupe by count to avoid fetching same data multiple times
-  const uniqueCounts = [...new Set(refs.map((r) => r.count))];
   const replacements = new Map<string, string>();
 
-  for (const count of uniqueCounts) {
-    const content = await fetchSessionMessages(sessionID, count);
-    replacements.set(`$SESSION[${count}]`, content);
-    log(`Resolved $SESSION[${count}]: ${content.length} chars`);
+  for (const ref of refs) {
+    if (ref.type === "lastN") {
+      const content = await fetchSessionMessages(sessionID, ref.count);
+      replacements.set(ref.match, content);
+      log(`Resolved ${ref.match}: ${content.length} chars`);
+    } else if (ref.type === "specific") {
+      const content = await fetchSessionMessages(sessionID, undefined, ref.indices);
+      replacements.set(ref.match, content);
+      log(`Resolved ${ref.match}: ${content.length} chars`);
+    }
   }
 
-  return replaceSessionReferences(text, replacements);
+  return replaceTurnReferences(text, replacements);
 }
 
 async function flattenParallels(
@@ -208,8 +227,8 @@ async function flattenParallels(
     template = template.replace(/\$ARGUMENTS/g, args);
 
     // Resolve $SESSION[n] references in the template
-    if (hasSessionReferences(template)) {
-      template = await resolveSessionReferences(template, sessionID);
+    if (hasTurnReferences(template)) {
+      template = await resolveTurnReferences(template, sessionID);
       log(`Parallel ${parallelCmd.command}: resolved $SESSION refs`);
     }
 
@@ -332,8 +351,8 @@ const plugin: Plugin = async (ctx) => {
       }
 
       // Resolve $SESSION[n] references in mainArgs
-      if (hasSessionReferences(mainArgs)) {
-        mainArgs = await resolveSessionReferences(mainArgs, input.sessionID);
+      if (hasTurnReferences(mainArgs)) {
+        mainArgs = await resolveTurnReferences(mainArgs, input.sessionID);
         log(`Resolved $SESSION in mainArgs: ${mainArgs.length} chars`);
       }
 
@@ -343,17 +362,17 @@ const plugin: Plugin = async (ctx) => {
         log(`Part type=${part.type}, hasPrompt=${!!part.prompt}, hasText=${!!part.text}`);
         if (part.type === "subtask" && part.prompt) {
           log(`Subtask prompt (first 200): ${part.prompt.substring(0, 200)}`);
-          if (hasSessionReferences(part.prompt)) {
+          if (hasTurnReferences(part.prompt)) {
             log(`Found $SESSION in subtask prompt, resolving...`);
-            part.prompt = await resolveSessionReferences(part.prompt, input.sessionID);
+            part.prompt = await resolveTurnReferences(part.prompt, input.sessionID);
             log(`Resolved subtask prompt (first 200): ${part.prompt.substring(0, 200)}`);
           }
         }
         if (part.type === "text" && part.text) {
           log(`Text part (first 200): ${part.text.substring(0, 200)}`);
-          if (hasSessionReferences(part.text)) {
+          if (hasTurnReferences(part.text)) {
             log(`Found $SESSION in text part, resolving...`);
-            part.text = await resolveSessionReferences(part.text, input.sessionID);
+            part.text = await resolveTurnReferences(part.text, input.sessionID);
             log(`Resolved text part (first 200): ${part.text.substring(0, 200)}`);
           }
         }
@@ -434,10 +453,10 @@ const plugin: Plugin = async (ctx) => {
       
       // Resolve $SESSION[n] in the prompt for ANY subtask
       // Use parent session if this command was triggered via executeReturn
-      if (prompt && hasSessionReferences(prompt)) {
+      if (prompt && hasTurnReferences(prompt)) {
         const resolveFromSession = pendingParentSession || input.sessionID;
         log(`tool.execute.before: resolving $SESSION in prompt (from ${pendingParentSession ? 'parent' : 'current'} session ${resolveFromSession})`);
-        output.args.prompt = await resolveSessionReferences(prompt, resolveFromSession);
+        output.args.prompt = await resolveTurnReferences(prompt, resolveFromSession);
         log(`tool.execute.before: resolved prompt (${output.args.prompt.length} chars)`);
         // Clear after use
         pendingParentSession = null;
