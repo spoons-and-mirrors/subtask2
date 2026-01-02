@@ -182,6 +182,10 @@ async function resolveTurnReferences(
       const content = await fetchSessionMessages(sessionID, undefined, ref.indices);
       replacements.set(ref.match, content);
       log(`Resolved ${ref.match}: ${content.length} chars`);
+    } else if (ref.type === "all") {
+      const content = await fetchSessionMessages(sessionID, Infinity);
+      replacements.set(ref.match, content);
+      log(`Resolved ${ref.match}: ${content.length} chars`);
     }
   }
 

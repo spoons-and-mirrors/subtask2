@@ -57,7 +57,8 @@ const TURN_SPECIFIC_PATTERN = "\\$TURN\\[([:\\d]+)\\]";
 
 export type TurnReference = 
   | { type: "lastN"; match: string; count: number }
-  | { type: "specific"; match: string; indices: number[] };
+  | { type: "specific"; match: string; indices: number[] }
+  | { type: "all"; match: string };
 
 /**
  * Extract all $TURN references from a string
@@ -74,7 +75,10 @@ export function extractTurnReferences(text: string): TurnReference[] {
   while ((match = regex.exec(text)) !== null) {
     const inner = match[1];
     
-    if (inner.startsWith(":")) {
+    if (inner === "*") {
+      // All messages: $TURN[*]
+      refs.push({ type: "all", match: match[0] });
+    } else if (inner.startsWith(":")) {
       // Specific indices: $TURN[:2] or $TURN[:2:5:8]
       const indices = inner.split(":").filter(Boolean).map(n => parseInt(n, 10));
       if (indices.length > 0 && indices.every(n => !isNaN(n))) {
