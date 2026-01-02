@@ -114,6 +114,9 @@ async function fetchSessionMessages(
       const parts: string[] = [];
 
       for (const part of msg.parts) {
+        // Skip ignored parts
+        if (part.ignored) continue;
+        
         if (part.type === "text" && part.text) {
           // Replace the generic opencode summarize prompt with our first return prompt
           if (part.text.startsWith("Summarize the task tool output")) {
