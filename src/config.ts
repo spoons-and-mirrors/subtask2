@@ -22,6 +22,7 @@ function isValidConfig(obj: unknown): obj is Subtask2Config {
 export async function loadConfig(): Promise<Subtask2Config> {
   const defaultConfig: Subtask2Config = {
     replace_generic: true,
+    enable_command_tool: false,
   };
 
   try {

@@ -62,27 +62,39 @@ async function fetchSessionMessages(
     });
 
     const messages = result.data;
-    log(`fetchSessionMessages: got ${messages?.length ?? 0} messages from ${sessionID}`);
-    
+    log(
+      `fetchSessionMessages: got ${
+        messages?.length ?? 0
+      } messages from ${sessionID}`
+    );
+
     if (!messages?.length) {
       return "[TURN: no messages found]";
     }
 
     // Log all messages for debugging
-    log(`All messages:`, messages.map((m: any, i: number) => ({
-      idx: i,
-      role: m.info.role,
-      partsCount: m.parts?.length,
-      textParts: m.parts?.filter((p: any) => p.type === 'text').map((p: any) => p.text?.substring(0, 30))
-    })));
+    log(
+      `All messages:`,
+      messages.map((m: any, i: number) => ({
+        idx: i,
+        role: m.info.role,
+        partsCount: m.parts?.length,
+        textParts: m.parts
+          ?.filter((p: any) => p.type === "text")
+          .map((p: any) => p.text?.substring(0, 30)),
+      }))
+    );
 
     // Filter out trailing empty messages (from current command being initiated)
     let effectiveMessages = messages;
     while (effectiveMessages.length > 0) {
       const last = effectiveMessages[effectiveMessages.length - 1];
-      const hasContent = last.parts?.some((p: any) => 
-        (p.type === "text" && p.text?.trim()) || 
-        (p.type === "tool" && p.state?.status === "completed" && p.state?.output)
+      const hasContent = last.parts?.some(
+        (p: any) =>
+          (p.type === "text" && p.text?.trim()) ||
+          (p.type === "tool" &&
+            p.state?.status === "completed" &&
+            p.state?.output)
       );
       if (!hasContent) {
         effectiveMessages = effectiveMessages.slice(0, -1);
@@ -90,16 +102,22 @@ async function fetchSessionMessages(
         break;
       }
     }
-    log(`After filtering empty trailing messages: ${effectiveMessages.length} (was ${messages.length})`);
+    log(
+      `After filtering empty trailing messages: ${effectiveMessages.length} (was ${messages.length})`
+    );
 
     // Select messages based on mode
     let selectedMessages: any[];
     if (specificIndices && specificIndices.length > 0) {
       // Specific indices mode: $TURN[:2:5:8] - indices are 1-based from end
       selectedMessages = specificIndices
-        .map(idx => effectiveMessages[effectiveMessages.length - idx])
+        .map((idx) => effectiveMessages[effectiveMessages.length - idx])
         .filter(Boolean);
-      log(`Using specific indices [${specificIndices.join(',')}] -> ${selectedMessages.length} messages`);
+      log(
+        `Using specific indices [${specificIndices.join(",")}] -> ${
+          selectedMessages.length
+        } messages`
+      );
     } else if (lastN) {
       // Last N mode: $TURN[5]
       selectedMessages = effectiveMessages.slice(-lastN);
@@ -117,7 +135,7 @@ async function fetchSessionMessages(
       for (const part of msg.parts) {
         // Skip ignored parts
         if (part.ignored) continue;
-        
+
         if (part.type === "text" && part.text) {
           // Replace the generic opencode summarize prompt with our first return prompt
           if (part.text.startsWith("Summarize the task tool output")) {
@@ -135,7 +153,9 @@ async function fetchSessionMessages(
           let output = part.state.output;
           if (output && typeof output === "string") {
             // Strip <task_metadata> tags from task tool output
-            output = output.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "").trim();
+            output = output
+              .replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "")
+              .trim();
             if (output && output.length < 2000) {
               // For task tool, just include the content directly (it's the subtask's response)
               if (toolName === "task") {
@@ -180,7 +200,11 @@ async function resolveTurnReferences(
       replacements.set(ref.match, content);
       log(`Resolved ${ref.match}: ${content.length} chars`);
     } else if (ref.type === "specific") {
-      const content = await fetchSessionMessages(sessionID, undefined, ref.indices);
+      const content = await fetchSessionMessages(
+        sessionID,
+        undefined,
+        ref.indices
+      );
       replacements.set(ref.match, content);
       log(`Resolved ${ref.match}: ${content.length} chars`);
     } else if (ref.type === "all") {
@@ -284,9 +308,9 @@ const plugin: Plugin = async (ctx) => {
   configs = await buildManifest();
   pluginConfig = await loadConfig();
   client = ctx.client;
-  
+
   const allKeys = Object.keys(configs);
-  const uniqueCmds = allKeys.filter(k => !k.includes('/'));
+  const uniqueCmds = allKeys.filter((k) => !k.includes("/"));
   log(`Plugin initialized: ${uniqueCmds.length} commands`, uniqueCmds);
 
   // Helper to execute a return item (command or prompt)
@@ -302,7 +326,9 @@ const plugin: Plugin = async (ctx) => {
 
       // Find the path key for this command (OpenCode needs full path for subfolder commands)
       const allKeys = Object.keys(configs);
-      const pathKey = allKeys.find(k => k.includes('/') && k.endsWith('/' + cmdName)) || cmdName;
+      const pathKey =
+        allKeys.find((k) => k.includes("/") && k.endsWith("/" + cmdName)) ||
+        cmdName;
 
       // Check if we have piped args for this return command
       const returnArgs = returnArgsState.get(sessionID);
@@ -312,7 +338,9 @@ const plugin: Plugin = async (ctx) => {
         if (pipeArg) args = pipeArg;
       }
 
-      log(`executeReturn: /${cmdName} -> ${pathKey} args="${args}" (parent=${sessionID})`);
+      log(
+        `executeReturn: /${cmdName} -> ${pathKey} args="${args}" (parent=${sessionID})`
+      );
       sessionMainCommand.set(sessionID, pathKey);
       // Set parent session for $SESSION resolution - will be consumed by tool.execute.before
       pendingParentSession = sessionID;
@@ -334,29 +362,44 @@ const plugin: Plugin = async (ctx) => {
     }
   }
 
+  // Build command tool if enabled
+  const commandTool = pluginConfig.enable_command_tool
+    ? {
+        tool: {
+          command: tool({
+            description: await Bun.file(
+              new URL("./src/command-tool.txt", import.meta.url).pathname
+            )
+              .text()
+              .catch(() => "Execute an opencode command"),
+            args: {
+              command: tool.schema
+                .string()
+                .describe("Command name (e.g. /plan)"),
+              arguments: tool.schema
+                .string()
+                .optional()
+                .describe("Arguments to pass"),
+            },
+            async execute(args, context) {
+              const cmdName = args.command.replace(/^\//, "");
+              const pathKey =
+                Object.keys(configs).find(
+                  (k) => k.includes("/") && k.endsWith("/" + cmdName)
+                ) || cmdName;
+              const ctx = context as any;
+              if (!ctx.queueCommand)
+                return "queueCommand not available - requires opencode PR";
+              ctx.queueCommand(pathKey, args.arguments || "");
+              return `Command /${cmdName} queued. Don't think, don't say anything, just end your turn here, right now.`;
+            },
+          }),
+        },
+      }
+    : {};
+
   return {
-    tool: {
-      command: tool({
-        description: "Execute an opencode command",
-        args: {
-          command: tool.schema.string().describe("Command name (e.g. /plan)"),
-          arguments: tool.schema.string().optional().describe("Arguments to pass"),
-        },
-        async execute(args, context) {
-          const cmdName = args.command.replace(/^\//, "");
-          const allKeys = Object.keys(configs);
-          const pathKey = allKeys.find(k => k.includes('/') && k.endsWith('/' + cmdName)) || cmdName;
-          const ctx = context as any;
-          
-          if (!ctx.queueCommand) {
-            return "queueCommand not available - requires opencode PR";
-          }
-          
-          ctx.queueCommand(pathKey, args.arguments || "");
-          return `Queued /${cmdName}`;
-        },
-      }),
-    },
+    ...commandTool,
 
     "command.execute.before": async (
       input: {command: string; sessionID: string; arguments: string},
@@ -365,11 +408,16 @@ const plugin: Plugin = async (ctx) => {
       const cmd = input.command;
       const config = getConfig(configs, cmd);
       sessionMainCommand.set(input.sessionID, cmd);
-      log(`cmd.before: ${cmd}`, config ? {
-        return: config.return,
-        parallel: config.parallel.map(p => p.command),
-        agent: config.agent
-      } : "no config");
+      log(
+        `cmd.before: ${cmd}`,
+        config
+          ? {
+              return: config.return,
+              parallel: config.parallel.map((p) => p.command),
+              agent: config.agent,
+            }
+          : "no config"
+      );
 
       // Parse pipe-separated arguments: main || arg1 || arg2 || arg3 ...
       const argSegments = input.arguments.split("||").map((s) => s.trim());
@@ -390,13 +438,25 @@ const plugin: Plugin = async (ctx) => {
       // Resolve $SESSION[n] references in output parts
       log(`Processing ${output.parts.length} parts for $SESSION refs`);
       for (const part of output.parts) {
-        log(`Part type=${part.type}, hasPrompt=${!!part.prompt}, hasText=${!!part.text}`);
+        log(
+          `Part type=${
+            part.type
+          }, hasPrompt=${!!part.prompt}, hasText=${!!part.text}`
+        );
         if (part.type === "subtask" && part.prompt) {
           log(`Subtask prompt (first 200): ${part.prompt.substring(0, 200)}`);
           if (hasTurnReferences(part.prompt)) {
             log(`Found $SESSION in subtask prompt, resolving...`);
-            part.prompt = await resolveTurnReferences(part.prompt, input.sessionID);
-            log(`Resolved subtask prompt (first 200): ${part.prompt.substring(0, 200)}`);
+            part.prompt = await resolveTurnReferences(
+              part.prompt,
+              input.sessionID
+            );
+            log(
+              `Resolved subtask prompt (first 200): ${part.prompt.substring(
+                0,
+                200
+              )}`
+            );
           }
         }
         if (part.type === "text" && part.text) {
@@ -404,7 +464,9 @@ const plugin: Plugin = async (ctx) => {
           if (hasTurnReferences(part.text)) {
             log(`Found $SESSION in text part, resolving...`);
             part.text = await resolveTurnReferences(part.text, input.sessionID);
-            log(`Resolved text part (first 200): ${part.text.substring(0, 200)}`);
+            log(
+              `Resolved text part (first 200): ${part.text.substring(0, 200)}`
+            );
           }
         }
       }
@@ -447,29 +509,39 @@ const plugin: Plugin = async (ctx) => {
       const prompt = output.args?.prompt;
       const description = output.args?.description;
       let mainCmd = sessionMainCommand.get(input.sessionID);
-      
-      log(`tool.before: callID=${input.callID}, cmd=${cmd}, desc="${description?.substring(0,30)}", mainCmd=${mainCmd}`);
-      
-      // If mainCmd is not set (command.execute.before didn't fire - no PR), 
+
+      log(
+        `tool.before: callID=${
+          input.callID
+        }, cmd=${cmd}, desc="${description?.substring(
+          0,
+          30
+        )}", mainCmd=${mainCmd}`
+      );
+
+      // If mainCmd is not set (command.execute.before didn't fire - no PR),
       // set the first subtask command as the main command
       if (!mainCmd && cmd && getConfig(configs, cmd)) {
         sessionMainCommand.set(input.sessionID, cmd);
         mainCmd = cmd;
         const cmdConfig = getConfig(configs, cmd)!;
-        
+
         // Parse piped args from prompt if present (fallback for non-PR)
         if (prompt && prompt.includes("||")) {
           const pipeMatch = prompt.match(/\|\|(.+)/);
           if (pipeMatch) {
             const pipedPart = pipeMatch[1];
-            const pipedArgs = pipedPart.split("||").map((s: string) => s.trim()).filter(Boolean);
+            const pipedArgs = pipedPart
+              .split("||")
+              .map((s: string) => s.trim())
+              .filter(Boolean);
             if (pipedArgs.length) {
               pipedArgsQueue.set(input.sessionID, pipedArgs);
               output.args.prompt = prompt.replace(/\s*\|\|.+$/, "").trim();
             }
           }
         }
-        
+
         // Also set up return state since command.execute.before didn't run
         // Only do this once per session
         if (cmdConfig.return.length > 0 && !returnState.has(input.sessionID)) {
@@ -481,18 +553,27 @@ const plugin: Plugin = async (ctx) => {
           }
         }
       }
-      
+
       // Resolve $SESSION[n] in the prompt for ANY subtask
       // Use parent session if this command was triggered via executeReturn
       if (prompt && hasTurnReferences(prompt)) {
         const resolveFromSession = pendingParentSession || input.sessionID;
-        log(`tool.execute.before: resolving $SESSION in prompt (from ${pendingParentSession ? 'parent' : 'current'} session ${resolveFromSession})`);
-        output.args.prompt = await resolveTurnReferences(prompt, resolveFromSession);
-        log(`tool.execute.before: resolved prompt (${output.args.prompt.length} chars)`);
+        log(
+          `tool.execute.before: resolving $SESSION in prompt (from ${
+            pendingParentSession ? "parent" : "current"
+          } session ${resolveFromSession})`
+        );
+        output.args.prompt = await resolveTurnReferences(
+          prompt,
+          resolveFromSession
+        );
+        log(
+          `tool.execute.before: resolved prompt (${output.args.prompt.length} chars)`
+        );
         // Clear after use
         pendingParentSession = null;
       }
-      
+
       if (cmd && getConfig(configs, cmd)) {
         const cmdConfig = getConfig(configs, cmd)!;
         if (cmd === mainCmd) {
@@ -510,9 +591,11 @@ const plugin: Plugin = async (ctx) => {
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "task") return;
       const cmd = callState.get(input.callID);
-      
-      log(`tool.after: callID=${input.callID}, cmd=${cmd}, wasTracked=${!!cmd}`);
-      
+
+      log(
+        `tool.after: callID=${input.callID}, cmd=${cmd}, wasTracked=${!!cmd}`
+      );
+
       if (!cmd) {
         // Already processed or not our command
         return;
@@ -522,12 +605,18 @@ const plugin: Plugin = async (ctx) => {
       const mainCmd = sessionMainCommand.get(input.sessionID);
       const cmdConfig = cmd ? getConfig(configs, cmd) : undefined;
 
-      log(`tool.after: cmd=${cmd}, mainCmd=${mainCmd}, isMain=${cmd === mainCmd}, hasReturn=${!!cmdConfig?.return?.length}`);
+      log(
+        `tool.after: cmd=${cmd}, mainCmd=${mainCmd}, isMain=${
+          cmd === mainCmd
+        }, hasReturn=${!!cmdConfig?.return?.length}`
+      );
 
       if (cmd && cmd === mainCmd && cmdConfig?.return?.length) {
         // Only set pendingReturn if we haven't already
         if (!pendingReturns.has(input.sessionID)) {
-          log(`Setting pendingReturn: ${cmdConfig.return[0].substring(0, 50)}...`);
+          log(
+            `Setting pendingReturn: ${cmdConfig.return[0].substring(0, 50)}...`
+          );
           pendingReturns.set(input.sessionID, cmdConfig.return[0]);
         } else {
           log(`Skipping pendingReturn - already set`);
@@ -578,7 +667,8 @@ const plugin: Plugin = async (ctx) => {
       const pendingReturn = pendingNonSubtaskReturns.get(input.sessionID);
       if (pendingReturn?.length && client) {
         const next = pendingReturn.shift()!;
-        if (!pendingReturn.length) pendingNonSubtaskReturns.delete(input.sessionID);
+        if (!pendingReturn.length)
+          pendingNonSubtaskReturns.delete(input.sessionID);
         executeReturn(next, input.sessionID).catch(console.error);
         return;
       }
@@ -586,7 +676,7 @@ const plugin: Plugin = async (ctx) => {
       // Handle remaining returns
       const remaining = returnState.get(input.sessionID);
       if (!remaining?.length || !client) return;
-      
+
       const next = remaining.shift()!;
       if (!remaining.length) returnState.delete(input.sessionID);
       executeReturn(next, input.sessionID).catch(console.error);

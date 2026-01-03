@@ -14,6 +14,7 @@ export interface CommandConfig {
 export interface Subtask2Config {
   replace_generic: boolean;
   generic_return?: string;
+  enable_command_tool?: boolean;
 }
 
 export interface SubtaskPart {

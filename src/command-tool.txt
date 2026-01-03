@@ -1,0 +1,1 @@
+Execute an opencode command. Use this when the user explicitly asks you to run a specific command, or when you determine a command would be helpful for the task at hand. The command will be queued and executed after your current response.
