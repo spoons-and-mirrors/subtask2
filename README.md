@@ -6,13 +6,13 @@
 
 This plugin allows your opencode `/commands` to:
 
-- **Chain** `prompts`, `/commands` and `subtasks`
-- **Relay** subtask results or session context to subagents
-- **Loop** or **parallelize** subtasks
-- **Override** parameters inline (model, agent...)
-- **Create** commands on the fly with subtask2 inline commands
+- **Chain** `prompts`, `/commands` and `subagents` seamlessly
+- **Relay** subagent results or session context to other subagents
+- **Loop** or **parallelize** subagents
+- **Run** commands on the fly with the `/subtask` command
+- **Override** `/commands` parameters inline (model, agent, return, parallel...)
 
-If you already know opencode `/commands`, you'll be right at home, if not, start with [this page](https://opencode.ai/docs/commands/)
+If you already use opencode `/commands`, you'll be right at home, if not, start with [this page](https://opencode.ai/docs/commands/)
 
 ![citation](media/quote.webp)
 

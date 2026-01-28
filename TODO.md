@@ -40,12 +40,8 @@
 
 ---
 
-## Future Enhancements
+- [] auto mode refactor
+  `/subtask --auto prompt goes here` would generate a subtask2 workflow based on the user query, using question tool if available to define returns, parallels and maybe more?
 
-### Better Error Messages
-
-Add more descriptive errors when:
-
-- Command not found
-- Invalid override syntax
-- Loop max iterations exceeded
+- [] model aliases
+  introduce alias for model overrides, e.g. `{model:opus}` instead of `{model:github-copilot/claude-opus-4.5}`
