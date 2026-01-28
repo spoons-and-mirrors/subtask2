@@ -20,7 +20,7 @@ If you already know opencode `/commands`, you'll be right at home, if not, start
 
 ```json
 {
-  "plugins": ["@spoons-and-mirrors/subtask2"]
+  "plugins": ["@spoons-and-mirrors/subtask2@latest"]
 }
 ```
 
