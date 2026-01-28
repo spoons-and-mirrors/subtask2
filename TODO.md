@@ -45,3 +45,5 @@
 
 - [] model aliases
   introduce alias for model overrides, e.g. `{model:opus}` instead of `{model:github-copilot/claude-opus-4.5}`
+
+- [] use -- syntax for inline overrides?
