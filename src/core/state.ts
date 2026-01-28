@@ -12,7 +12,7 @@ let configs: Record<string, CommandConfig> = {};
 // Plugin user configuration
 let pluginConfig: Subtask2Config = { replace_generic: true };
 
-// OpenCode client instance
+// OpenCode client instance (v1 SDK with internal HTTP client)
 let client: any = null;
 
 // Session state maps
@@ -377,7 +377,10 @@ export function getPendingAgentOverride(sessionID: string): string | undefined {
   return pendingAgentOverride.get(sessionID);
 }
 
-export function setPendingAgentOverride(sessionID: string, agent: string): void {
+export function setPendingAgentOverride(
+  sessionID: string,
+  agent: string
+): void {
   pendingAgentOverride.set(sessionID, agent);
 }
 
@@ -389,9 +392,7 @@ export function deletePendingAgentOverride(sessionID: string): void {
 // Deferred Return Prompt (used for loops)
 // ============================================================================
 
-export function getDeferredReturnPrompt(
-  sessionID: string
-): string | undefined {
+export function getDeferredReturnPrompt(sessionID: string): string | undefined {
   return deferredReturnPrompt.get(sessionID);
 }
 

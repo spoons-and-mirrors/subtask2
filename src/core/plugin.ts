@@ -20,6 +20,9 @@ export const createPlugin: Plugin = async ctx => {
 
   setConfigs(configs);
   setPluginConfig(pluginConfig);
+
+  // Use the v1 client from OpenCode - it has internal fetch configured properly
+  // The internal HTTP client (client.client) can be used for undocumented endpoints
   setClient(ctx.client);
 
   const allKeys = Object.keys(configs);

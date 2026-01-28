@@ -24,7 +24,13 @@ import {
 
 /**
  * Update the synthetic part in the database to make it visible in TUI.
- * Uses the SDK client's internal HTTP mechanism since raw fetch doesn't work in plugin env.
+ *
+ * The v1 SDK from OpenCode exposes an internal hey-api HTTP client at client.client
+ * which we use to PATCH the part. This is the only reliable way to update parts
+ * from a plugin since client.part.update() doesn't exist in v1.
+ *
+ * Note: OpenCode's plugin system passes a v1 client. When/if they upgrade to v2,
+ * we can use client.part.update() directly.
  */
 async function makePartVisible(
   part: any,
@@ -53,28 +59,8 @@ async function makePartVisible(
     `makePartVisible: updating part ${partID} in DB to be visible with text: "${newText.substring(0, 50)}..."`
   );
 
-  // Try multiple approaches to access the SDK's HTTP client
+  // Use the internal HTTP client from v1 SDK
   try {
-    // Approach 1: Try client.part.update if it exists
-    if (client.part?.update) {
-      await client.part.update({
-        sessionID,
-        messageID,
-        partID,
-        part: {
-          id: partID,
-          messageID,
-          sessionID,
-          type: "text",
-          text: newText,
-        },
-      });
-      log(`makePartVisible: successfully updated via client.part.update`);
-      return;
-    }
-
-    // Approach 2: Try to access the internal HTTP client
-    // The SDK classes have `this.client` which is the hey-api HTTP client
     const httpClient = (client as any).client || (client as any)._client;
     if (httpClient?.patch) {
       await httpClient.patch({
@@ -85,25 +71,17 @@ async function makePartVisible(
           sessionID,
           type: "text",
           text: newText,
+          synthetic: false, // Make visible in TUI
         },
       });
-      log(`makePartVisible: successfully updated via internal HTTP client`);
-      return;
-    }
-
-    // Approach 3: Log what's available on the client for debugging
-    log(
-      `makePartVisible: client structure - keys: ${Object.keys(client).join(", ")}`
-    );
-    if ((client as any).session) {
+      log(`makePartVisible: success`);
+    } else {
       log(
-        `makePartVisible: session keys: ${Object.keys((client as any).session).join(", ")}`
+        `makePartVisible: no internal HTTP client found - keys: ${Object.keys(client).join(", ")}`
       );
     }
-
-    log(`makePartVisible: no suitable HTTP method found on client`);
   } catch (e) {
-    log(`makePartVisible: failed to update part: ${e}`);
+    log(`makePartVisible: failed - ${e}`);
   }
 }
 
