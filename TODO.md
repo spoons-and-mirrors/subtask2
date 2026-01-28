@@ -22,24 +22,6 @@
 
 ---
 
-## Medium Priority
-
-### Investigate makePartVisible Fallback Behavior
-
-**Location**: `src/hooks/message-hooks.ts:29-108`
-
-**Issue**: The function tries multiple approaches to update part visibility in the database:
-
-1. `client.part.update()` (doesn't exist on current SDK)
-2. Internal HTTP client `client.client.patch()` (currently working)
-3. Logs "no suitable HTTP method found" if both fail
-
-**Problem**: May not work in all OpenCode versions or environments.
-
-**Action**: Monitor for issues, add telemetry/logging to track success rate.
-
----
-
 - [] auto mode refactor
   `/subtask --auto prompt goes here` would generate a subtask2 workflow based on the user query, using question tool if available to define returns, parallels and maybe more?
 
