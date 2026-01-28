@@ -11,7 +11,7 @@ export { _resetReadmeCache } from "./config";
  * Default return prompt when no return is specified and replace_generic is true
  */
 export const DEFAULT_RETURN_PROMPT =
-  "Challenge AND review THEN validate OR revise the previous task tool output, then USE the question tool to let the user choose the next logical thing to do. Order your questions defensively and logically.";
+  "Review, challenge and verify the task tool output above against the codebase. Then validate or revise it, before continuing with the next logical step.";
 
 /**
  * Placeholder for README content in auto workflow prompt

@@ -1,4 +1,4 @@
-## Extend opencode `/commands` into a powerful orchestration system
+## Augment your opencode `/commands` with subtask2
 
 ![subtask2 header](media/header.webp)
 
@@ -6,7 +6,7 @@
 
 This plugin allows your opencode `/commands` to:
 
-- **Chain** `prompts`, `/commands` and `subagents`
+- **Chain** `prompts`, `/commands` and `subtasks`
 - **Relay** subtask results or session context to subagents
 - **Loop** or **parallelize** subtasks
 - **Override** parameters inline (model, agent...)
@@ -20,29 +20,31 @@ If you already know opencode `/commands`, you'll be right at home, if not, start
 
 ```json
 {
-  "plugins": ["@spoons-and-mirrors/subtask2@dev"]
+  "plugins": ["@spoons-and-mirrors/subtask2"]
 }
 ```
 
 ---
 
-<details>
-<summary><strong>Plugin documentation</strong></summary>
-
 ### Key Features
 
 - `return` instruct main session on command/subtask(s) result
-- `as` name subtask results for later reference with `$RESULT[name]`
 - `loop` loop subtask until user condition is met
-- `parallel` run subtasks concurrently - _pending PR ⚠️_
-- `arguments` pass arguments with command frontmatter or `||` message pipe
+- `parallel` run subtasks concurrently - _pending PR_
 - `$TURN[n]` pass session turns (user/assistant messages)
+- `{as:name}` + `$RESULT[name]` capture and reference subtask outputs
+- Inline syntax for model, agent, and ad-hoc subtasks
 
 Requires [this PR](https://github.com/sst/opencode/pull/6478) for the `parallel` feature
 
-### 1. `return` - Or the old 'look again' trick
+---
 
-Use `return` to tell the main agent what to do after a command completes, supports /commands and chaining.
+<details>
+<summary><strong>1. <code>return</code> - Chaining prompts and commands</strong></summary>
+
+### 1. `return` - Chaining prompts and commands
+
+Use `return` to tell the main agent what to do after a command completes. Supports prompts, /commands, and chaining.
 
 ```yaml
 subtask: true
@@ -76,7 +78,7 @@ Design the auth system for $ARGUMENTS
 
 **How return prompts work:**
 
-When a `subtask: true` completes, OpenCode normally injects a hidden synthetic user message asking the model to "summarize the task tool output..." - Subtask2 completely suppresses this message and handles returns differently:
+When a `subtask: true` completes, OpenCode normally injects a hidden synthetic user message asking the model to "summarize the task tool output..." - Subtask2 completely removes this message and handles returns differently:
 
 - **Prompt returns**: Fired as **real user messages** visible in your conversation. You'll see the return prompt appear as if you typed it.
 - **Command returns** (starting with `/`): The command executes immediately.
@@ -85,87 +87,12 @@ This gives you full visibility into what's driving the agent's next action.
 
 `/commands` are executed as full commands with their own `parallel` and `return`
 
-### 2. `{model:...}` - Inline model override
+</details>
 
-Override the model for any command invocation without modifying the command file. Place overrides after the command with a space:
+<details>
+<summary><strong>2. <code>loop</code> - Repeat until condition is met</strong></summary>
 
-```bash
-/plan {model:anthropic/claude-sonnet-4} design auth system
-```
-
-```yaml
-return:
-  - /plan {model:github-copilot/claude-sonnet-4.5}
-  - /plan {model:openai/gpt-5.2}
-  - Compare both plans and pick the best approach
-```
-
-This lets you reuse a single command template with different models - no need to duplicate commands just to change the model.
-
-### 2b. `{agent:...}` - Inline agent override
-
-Override the agent for any command invocation:
-
-```bash
-/research {agent:explore} find auth patterns
-```
-
-```yaml
-return:
-  - /implement {agent:build}
-  - /review {agent:plan}
-```
-
-**Syntax:** `/command {agent:agent-name}` - can be combined with other overrides using `&&`.
-
-### 2c. `/subtask {...} prompt` - Inline subtasks
-
-Create a subtask directly in return chains or chat without needing a command file. Use `/subtask {...}` (with a space before the brace) followed by your prompt:
-
-```yaml
-return:
-  - /subtask {loop:10 && until:tests pass} Fix failing tests and run the suite
-  - /subtask {model:openai/gpt-4o && agent:build} Implement the feature
-  - Summarize what was done
-```
-
-**Combining overrides:**
-
-```yaml
-return:
-  - /subtask {model:anthropic/claude-sonnet-4 && agent:build && loop:5 && until:all done} Implement and verify the auth system
-```
-
-**Inline returns** - chain returns directly within inline subtasks:
-
-```yaml
-return:
-  - /subtask {return:validate the output || run tests || deploy} implement the feature
-```
-
-Returns execute in order after the subtask completes, before continuing with the parent chain.
-
-**Syntax:** `/subtask {key:value && ...} prompt text`. Use `&&` to separate parameters, and `||` to separate multi-value params like `return` and `parallel`.
-
-**Important:** The space between `/subtask` and `{` is required for instant execution. This allows OpenCode to recognize it as the `/subtask` command and trigger it immediately.
-
-### 2d. `/subtask prompt` - Simple inline subtasks from chat
-
-For simple subtasks without overrides:
-
-```bash
-/subtask tell me a joke                                                # simple subtask
-/subtask {model:openai/gpt-4o} analyze this code                       # with model override
-/subtask {agent:build && loop:3 && until:all tests pass} fix tests     # with agent + loop
-```
-
-This lets you spawn ad-hoc subtasks without creating command files or using return chains.
-
-**Command registration:**
-
-Subtask2 registers `/subtask` via the plugin config hook. No manual command file is needed.
-
-### 3. `{loop:N}` and `{loop:N && until:X}` - Loop control
+### 2. `loop` - Repeat until condition is met
 
 Run a command repeatedly, either a fixed number of times or until a condition is satisfied.
 
@@ -227,7 +154,12 @@ return:
 
 **Priority:** inline `{loop:...}` > frontmatter `loop:`
 
-### 4. `parallel` - Run multiple subtasks concurrently ⚠️ **PENDING PR**
+</details>
+
+<details>
+<summary><strong>3. <code>parallel</code> - Run subtasks concurrently</strong></summary>
+
+### 3. `parallel` - Run subtasks concurrently
 
 Spawn additional command subtasks alongside the main one:
 
@@ -294,83 +226,18 @@ parallel: /research-docs, /research-codebase, /security-audit
 
 #### Priority: pipe args > frontmatter args > inherit main args
 
-### 4b. `{as:name}` - Named results with `$RESULT[name]`
+</details>
 
-Capture command outputs and reference them later in return chains. Works with any command type - subtasks, parallel commands, inline subtasks, and even regular non-subtask commands.
+<details>
+<summary><strong>4. Context & Results - <code>$TURN</code>, <code>{as:name}</code>, <code>$RESULT</code></strong></summary>
 
-**Multi-model comparison with named results:**
+### 4. Context & Results
 
-```yaml
-subtask: true
-parallel:
-  - /plan {model:anthropic/claude-sonnet-4 && as:claude-plan}
-  - /plan {model:openai/gpt-4o && as:gpt-plan}
-return:
-  - /deep-analysis {as:analysis}
-  - "Compare $RESULT[claude-plan] vs $RESULT[gpt-plan] using insights from $RESULT[analysis]"
-```
+Pass conversation context to subtasks and capture their outputs for later use.
 
-This runs two planning subtasks with different models, then a deep analysis, then compares all three results in the final return.
+---
 
-**In return chains:**
-
-```yaml
-return:
-  - /research {as:research}
-  - /design {as:design}
-  - "Implement based on $RESULT[research] and $RESULT[design]"
-```
-
-**With inline subtasks:**
-
-```yaml
-return:
-  - /subtask {model:openai/gpt-4o && as:gpt-take} analyze the auth flow
-  - /subtask {model:anthropic/claude-sonnet-4 && as:claude-take} analyze the auth flow
-  - "Synthesize $RESULT[gpt-take] and $RESULT[claude-take] into a unified analysis"
-```
-
-**Syntax:** `{as:name}` - can be combined with other overrides using `&&`.
-
-**How it works:**
-
-1. When a subtask with `as:name` completes, its final output is captured
-2. The result is stored and associated with the parent session
-3. When processing return prompts, `$RESULT[name]` is replaced with the captured output
-4. If a result isn't found, it's replaced with `[Result 'name' not found]`
-
-### 5. Suppressing OpenCode's generic message
-
-When a `subtask: true` command completes, OpenCode injects a synthetic user message asking the model to "summarize the task tool output..." This message is hidden from the user but visible to the model.
-
-**Subtask2 completely removes this message from the conversation history**, whether or not you define a `return` prompt. This prevents the generic summarization behavior and gives you full control over what happens next.
-
-**When `return` is defined:**
-
-- The synthetic message is removed from history
-- For prompt returns: a **real user message** (visible to you) is sent with the return prompt
-- For `/command` returns: the command executes immediately
-
-**When `return` is not defined:**
-If `replace_generic` is enabled (default), subtask2 still removes the synthetic message and fires a fallback prompt:
-
-> Review, challenge and validate the task output against the codebase then continue with the next logical step.
-
-Configure in `~/.config/opencode/subtask2.jsonc`:
-
-```jsonc
-{
-  // Replace generic prompt when no 'return' is specified
-  "replace_generic": true, // defaults to true
-
-  // Custom fallback (optional - has built-in default)
-  "generic_return": "custom return prompt",
-}
-```
-
-#### Priority: `return` param > config `generic_return` > built-in default > opencode original
-
-### 6. `$TURN[n]` - Reference previous conversation turns
+#### `$TURN[n]` - Reference previous conversation turns
 
 Use `$TURN[n]` to inject the last N conversation turns (user + assistant messages) into your command. This is powerful for commands that need context from the ongoing conversation.
 
@@ -418,38 +285,191 @@ Works in:
 - Parallel command prompts
 - Piped arguments (`||`)
 
-### 7. `subtask2: auto` - Dynamic Workflow Generation
+---
 
-Let the LLM create and execute workflows dynamically:
+#### `{as:name}` and `$RESULT[name]` - Named results
+
+Capture command outputs and reference them later in return chains. Works with any command type - subtasks, parallel commands, inline subtasks, and even regular non-subtask commands.
+
+**Multi-model comparison with named results:**
 
 ```yaml
----
-description: auto-generate and execute a workflow
-subtask2: auto
 subtask: true
+parallel:
+  - /plan {model:anthropic/claude-sonnet-4 && as:claude-plan}
+  - /plan {model:openai/gpt-4o && as:gpt-plan}
+return:
+  - /deep-analysis {as:analysis}
+  - "Compare $RESULT[claude-plan] vs $RESULT[gpt-plan] using insights from $RESULT[analysis]"
+```
+
+This runs two planning subtasks with different models, then a deep analysis, then compares all three results in the final return.
+
+**In return chains:**
+
+```yaml
+return:
+  - /research {as:research}
+  - /design {as:design}
+  - "Implement based on $RESULT[research] and $RESULT[design]"
+```
+
+**With inline subtasks:**
+
+```yaml
+return:
+  - /subtask {model:openai/gpt-4o && as:gpt-take} analyze the auth flow
+  - /subtask {model:anthropic/claude-sonnet-4 && as:claude-take} analyze the auth flow
+  - "Synthesize $RESULT[gpt-take] and $RESULT[claude-take] into a unified analysis"
+```
+
+**Syntax:** `{as:name}` - can be combined with other overrides using `&&`.
+
+**How it works:**
+
+1. When a subtask with `as:name` completes, its final output is captured
+2. The result is stored and associated with the parent session
+3. When processing return prompts, `$RESULT[name]` is replaced with the captured output
+4. If a result isn't found, it's replaced with `[Result 'name' not found]`
+
+</details>
+
+<details>
+<summary><strong>5. Inline Syntax - Overrides and ad-hoc subtasks</strong></summary>
+
+### 5. Inline Syntax
+
+Override command parameters or create subtasks on the fly without modifying command files.
+
 ---
-$ARGUMENTS
-```
 
-**Usage:**
+#### `{model:...}` - Model override
 
-```bash
-/auto-workflow build a multi-model planning system with validation
-```
-
-You can also trigger auto mode directly from an inline subtask:
+Override the model for any command invocation:
 
 ```bash
-/subtask {auto:true} build a multi-model planning system with validation
+/plan {model:anthropic/claude-sonnet-4} design auth system
 ```
 
-The LLM will:
+```yaml
+return:
+  - /plan {model:github-copilot/claude-sonnet-4.5}
+  - /plan {model:openai/gpt-5.2}
+  - Compare both plans and pick the best approach
+```
 
-1. Analyze your request
-2. Generate an appropriate workflow
-3. Execute that workflow automatically
+This lets you reuse a single command template with different models - no need to duplicate commands just to change the model.
 
-**Note:** `return`, `parallel`, and `$TURN` are ignored in auto commands - the LLM generates these dynamically.
+---
+
+#### `{agent:...}` - Agent override
+
+Override the agent for any command invocation:
+
+```bash
+/research {agent:explore} find auth patterns
+```
+
+```yaml
+return:
+  - /implement {agent:build}
+  - /review {agent:plan}
+```
+
+---
+
+#### Combining overrides
+
+Use `&&` to combine multiple overrides:
+
+```bash
+/plan {model:openai/gpt-4o && agent:build} implement the feature
+```
+
+---
+
+#### `/subtask {...} prompt` - Ad-hoc subtasks
+
+Create a subtask directly in return chains or chat without needing a command file. Use `/subtask {...}` (with a space before the brace) followed by your prompt:
+
+```yaml
+return:
+  - /subtask {loop:10 && until:tests pass} Fix failing tests and run the suite
+  - /subtask {model:openai/gpt-4o && agent:build} Implement the feature
+  - Summarize what was done
+```
+
+**Combining all overrides:**
+
+```yaml
+return:
+  - /subtask {model:anthropic/claude-sonnet-4 && agent:build && loop:5 && until:all done} Implement and verify the auth system
+```
+
+**Inline returns** - chain returns directly within inline subtasks:
+
+```yaml
+return:
+  - /subtask {return:validate the output || run tests || deploy} implement the feature
+```
+
+Returns execute in order after the subtask completes, before continuing with the parent chain.
+
+**Syntax:** `/subtask {key:value && ...} prompt text`. Use `&&` to separate parameters, and `||` to separate multi-value params like `return` and `parallel`.
+
+**Important:** The space between `/subtask` and `{` is required for instant execution.
+
+---
+
+#### `/subtask prompt` - Simple inline subtasks
+
+For simple subtasks without overrides:
+
+```bash
+/subtask tell me a joke                                                # simple subtask
+/subtask {model:openai/gpt-4o} analyze this code                       # with model override
+/subtask {agent:build && loop:3 && until:all tests pass} fix tests     # with agent + loop
+```
+
+This lets you spawn ad-hoc subtasks without creating command files or using return chains.
+
+Subtask2 registers `/subtask` via the plugin config hook. No manual command file is needed.
+
+</details>
+
+<details>
+<summary><strong>6. OpenCode's Generic Message</strong></summary>
+
+### 6. OpenCode's Generic Message
+
+When a `subtask: true` command completes, OpenCode injects a synthetic user message asking the model to "summarize the task tool output..." This message is hidden from the user but visible to the model.
+
+**Subtask2 completely removes this message from the conversation history**, whether or not you define a `return` prompt. This prevents the generic summarization behavior and gives you full control over what happens next.
+
+**When `return` is defined:**
+
+- The synthetic message is removed from history
+- For prompt returns: a **real user message** (visible to you) is sent with the return prompt
+- For `/command` returns: the command executes immediately
+
+**When `return` is not defined:**
+If `replace_generic` is enabled (default), subtask2 still removes the synthetic message and fires a fallback prompt:
+
+> Review, challenge and verify the task tool output above against the codebase. Then validate or revise it, before continuing with the next logical step.
+
+Configure in `~/.config/opencode/subtask2.jsonc`:
+
+```jsonc
+{
+  // Replace generic prompt when no 'return' is specified
+  "replace_generic": true, // defaults to true
+
+  // Custom fallback (optional - has built-in default)
+  "generic_return": "custom return prompt",
+}
+```
+
+#### Priority: `return` param > config `generic_return` > built-in default > opencode original
 
 </details>
 

@@ -85,8 +85,8 @@ export async function loadConfig(): Promise<Subtask2Config> {
   // Replace OpenCode's generic "Summarize..." prompt when no return is specified
   "replace_generic": true,
 
-  // Custom prompt to use when replacing_generic: true | optional
-  //"generic_return": "Challenge AND review THEN validate OR revise the previous task tool output. AFTER This is done, USE the question tool to let the user direct the next step. Order your questions defensively and logically"
+  // Custom prompt to use when replace_generic: true | optional
+  //\"generic_return\": \"Review, challenge and verify the task tool output above against the codebase. Then validate or revise it, before continuing with the next logical step.\"
 }
 `
   );
