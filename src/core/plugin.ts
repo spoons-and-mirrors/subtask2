@@ -35,7 +35,8 @@ export const createPlugin: Plugin = async ctx => {
       input.command ??= {};
       input.command.subtask = {
         description: "Run a command on the fly, supports all subtask2 features",
-        template: "[ARGUMENTS]",
+        template: "$ARGUMENTS",
+        subtask: true,
       };
       log(`Registered /subtask command`);
     },
