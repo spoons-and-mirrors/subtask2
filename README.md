@@ -1,4 +1,4 @@
-## Augment your opencode `/commands` with subtask2
+## A better opencode `/command` handler
 
 ![subtask2 header](media/header.webp)
 
