@@ -43,7 +43,7 @@ export async function loadReadmeContent(): Promise<string> {
   }
 
   // Fallback if README can't be loaded
-  cachedReadmeContent = `[README could not be loaded - see https://github.com/openspoon/subtask2 for documentation]`;
+  cachedReadmeContent = `[README could not be loaded - see https://github.com/spoons-and-mirrors/subtask2 for documentation]`;
   return cachedReadmeContent;
 }
 

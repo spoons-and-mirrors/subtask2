@@ -150,7 +150,9 @@ describe("loadReadmeContent fallback", () => {
     try {
       const prompt = await getAutoWorkflowPrompt();
       expect(prompt).toContain("README could not be loaded");
-      expect(prompt).toContain("https://github.com/openspoon/subtask2");
+      expect(prompt).toContain(
+        "https://github.com/spoons-and-mirrors/subtask2"
+      );
     } finally {
       // Restore original Bun.file and reset cache for other tests
       (Bun as any).file = originalBunFile;
