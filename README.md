@@ -530,3 +530,7 @@ This runs 3 subtasks:
 After all complete, the `return` prompt synthesizes the results.
 
 </details>
+
+**License**: PolyForm Noncommercial 1.0.0. Commercial use requires a separate commercial license. Contact spoons-and-mirrors via the repository.
+
+**Contributing**: By submitting a PR, you assign copyright to spoons-and-mirrors. See [CONTRIBUTING.md](CONTRIBUTING.md).
