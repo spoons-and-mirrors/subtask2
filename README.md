@@ -2,7 +2,7 @@
 
 ![subtask2 header](media/header.webp)
 
-### TL:DR - Lower session entropy with a better controlled agentic loop
+### TL:DR - Lower session entropy with a more deterministic agentic loop
 
 This plugin allows your opencode `/commands` to:
 
