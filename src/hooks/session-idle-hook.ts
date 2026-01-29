@@ -12,6 +12,8 @@ import {
   storeSubtaskResult,
   consumeDeferredReturnPrompt,
   pushReturnStack,
+  getPendingResultCaptureByPrompt,
+  deletePendingResultCaptureByPrompt,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { executeReturn } from "../features/returns";
@@ -35,6 +37,71 @@ export async function handleSessionIdle(sessionID: string) {
 
   log(`session.idle: sessionID=${sessionID}`);
 
+  // Check if this is an inline subtask session with a pending `as:` capture
+  // Match by looking at the session's first user message (the prompt)
+  try {
+    const messages = await client.session.messages({ path: { id: sessionID } });
+    const firstUserMsg = messages.data?.find(
+      (m: any) => (m.info?.role ?? m.role) === "user"
+    );
+    if (firstUserMsg) {
+      // Look for the prompt in message parts - could be subtask or text type
+      for (const part of firstUserMsg.parts ?? []) {
+        // Get the prompt content from either subtask.prompt or text.text
+        const promptContent =
+          part.type === "subtask"
+            ? part.prompt?.trim()
+            : part.type === "text"
+              ? part.text?.trim()
+              : null;
+
+        if (!promptContent) continue;
+
+        const pendingCapture = getPendingResultCaptureByPrompt(promptContent);
+        if (pendingCapture) {
+          // Found a matching capture - get the last assistant response
+          const resultText = (() => {
+            const list = messages.data ?? [];
+            const reversed = [...list].reverse();
+            for (const msg of reversed) {
+              const role = msg.info?.role ?? msg.role;
+              if (role !== "assistant") continue;
+              const parts = msg.parts ?? [];
+              const reversedParts = [...parts].reverse();
+              for (const p of reversedParts) {
+                if (p.ignored) continue;
+                if (p.type === "text") {
+                  const text = p.text?.trim();
+                  if (text) return text;
+                }
+              }
+            }
+            return "";
+          })();
+
+          if (resultText) {
+            storeSubtaskResult(
+              pendingCapture.parentSessionID,
+              pendingCapture.name,
+              resultText
+            );
+            log(
+              `session.idle: captured inline subtask result for "${pendingCapture.name}" (${resultText.length} chars)`
+            );
+          } else {
+            log(
+              `session.idle: no assistant text found for "${pendingCapture.name}" capture`
+            );
+          }
+          deletePendingResultCaptureByPrompt(promptContent);
+          break; // Only capture once per session
+        }
+      }
+    }
+  } catch (err) {
+    log(`session.idle: failed to check for inline subtask capture: ${err}`);
+  }
+
   // Check for pending main session capture (non-subtask command with as:)
   const pendingCaptureName = consumePendingMainSessionCapture(sessionID);
   if (pendingCaptureName) {
@@ -42,16 +109,30 @@ export async function handleSessionIdle(sessionID: string) {
       const messages = await client.session.messages({
         path: { id: sessionID },
       });
-      // Get last assistant message
-      const assistantMsgs = messages.data?.filter(
-        (m: any) => (m.info?.role ?? m.role) === "assistant"
-      );
-      const lastMsg = assistantMsgs?.[assistantMsgs.length - 1];
-      const resultText =
-        lastMsg?.parts
-          ?.filter((p: any) => p.type === "text")
-          ?.map((p: any) => p.text)
-          ?.join("\n") || "";
+      const resultText = (() => {
+        const list = messages.data ?? [];
+        const reversed = [...list].reverse();
+        for (const msg of reversed) {
+          const parts = msg.parts ?? [];
+          const reversedParts = [...parts].reverse();
+          for (const part of reversedParts) {
+            if (part.ignored) continue;
+            if (part.type === "text") {
+              const text = part.text?.trim();
+              if (text) return text;
+            }
+            if (part.type === "tool" && part.state?.status === "completed") {
+              const output = part.state.output;
+              if (typeof output !== "string") continue;
+              const cleaned = output
+                .replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "")
+                .trim();
+              if (cleaned) return cleaned;
+            }
+          }
+        }
+        return "";
+      })();
 
       if (resultText) {
         storeSubtaskResult(sessionID, pendingCaptureName, resultText);

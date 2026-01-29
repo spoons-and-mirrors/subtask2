@@ -491,6 +491,8 @@ export function consumePendingMainSessionCapture(
 /**
  * Register a pending result capture by prompt content.
  * Called when spawning a subtask with `as:` name (before we know the session ID).
+ * NOTE: We keep this until session.idle matches the prompt, since tool.after
+ * doesn't have access to inline subtask output.
  */
 export function registerPendingResultCaptureByPrompt(
   prompt: string,
@@ -512,6 +514,23 @@ export function consumePendingResultCaptureByPrompt(
     pendingResultCaptureByPrompt.delete(prompt);
   }
   return entry;
+}
+
+/**
+ * Check if a prompt has a pending result capture (without consuming).
+ * Used in session.idle to match subtask sessions by prompt content.
+ */
+export function getPendingResultCaptureByPrompt(
+  prompt: string
+): { parentSessionID: string; name: string } | undefined {
+  return pendingResultCaptureByPrompt.get(prompt);
+}
+
+/**
+ * Delete a pending result capture by prompt (after capturing in session.idle).
+ */
+export function deletePendingResultCaptureByPrompt(prompt: string): void {
+  pendingResultCaptureByPrompt.delete(prompt);
 }
 
 /**

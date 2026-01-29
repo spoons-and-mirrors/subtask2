@@ -1,21 +1,67 @@
-import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "fs";
+import * as fs from "fs";
+import * as path from "path";
 
-const LOG_DIR = `${process.env.HOME}/.config/opencode/plugin/subtask2/logs`;
-const LOG_FILE = `${LOG_DIR}/debug.log`;
+const LOG_DIR = path.join(process.cwd(), ".logs");
+const LOG_FILE = path.join(LOG_DIR, "subtask2.log");
+const WRITE_INTERVAL_MS = 100;
 
-// Ensure log directory exists
-if (!existsSync(LOG_DIR)) {
-  mkdirSync(LOG_DIR, { recursive: true });
+let logBuffer: string[] = [];
+let writeScheduled = false;
+let initialized = false;
+
+function ensureInitialized(): boolean {
+  if (initialized) return true;
+
+  try {
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+    fs.writeFileSync(LOG_FILE, "");
+    initialized = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatTimestamp(): string {
+  return new Date().toISOString();
+}
+
+async function flushLogs(): Promise<void> {
+  if (logBuffer.length === 0) {
+    writeScheduled = false;
+    return;
+  }
+
+  const toWrite = logBuffer.join("");
+  logBuffer = [];
+  writeScheduled = false;
+
+  try {
+    await fs.promises.appendFile(LOG_FILE, toWrite);
+  } catch {}
+}
+
+function scheduleFlush(): void {
+  if (!writeScheduled) {
+    writeScheduled = true;
+    setTimeout(flushLogs, WRITE_INTERVAL_MS);
+  }
 }
 
 export function log(...args: unknown[]) {
-  const timestamp = new Date().toISOString();
+  if (!ensureInitialized()) return;
+
+  const timestamp = formatTimestamp();
   const message = args
     .map(a => (typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)))
     .join(" ");
-  appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`);
+  logBuffer.push(`[${timestamp}] ${message}\n`);
+  scheduleFlush();
 }
 
 export function clearLog() {
-  writeFileSync(LOG_FILE, "");
+  if (!ensureInitialized()) return;
+  fs.writeFileSync(LOG_FILE, "");
 }

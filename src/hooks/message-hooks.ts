@@ -9,6 +9,7 @@ import {
   OPENCODE_GENERIC,
   getConfigs,
   getClient,
+  hasReturnStack,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { DEFAULT_PROMPT } from "../utils/config";
@@ -235,7 +236,33 @@ export async function chatMessagesTransform(input: any, output: any) {
     }
 
     // No pending return found, use generic replacement if configured
+    // BUT skip if there are stacked returns (from inline subtasks with returns)
+    // Those will be processed by session.idle hook
     const pluginConfig = getPluginConfig();
+
+    // Check if ANY session has stacked returns - if so, skip generic replacement
+    // The session.idle hook will handle them properly
+    let hasAnyStackedReturns = false;
+    for (const msg of output.messages) {
+      const sessionID = msg.info?.sessionID;
+      if (sessionID && hasReturnStack(sessionID)) {
+        hasAnyStackedReturns = true;
+        break;
+      }
+    }
+
+    if (hasAnyStackedReturns) {
+      // Remove the summarize message - session.idle will handle returns
+      if (lastGenericMsgIndex >= 0) {
+        output.messages.splice(lastGenericMsgIndex, 1);
+        log(
+          `Removed summarize message - stacked returns will be processed by session.idle`
+        );
+      }
+      setHasActiveSubtask(false);
+      return;
+    }
+
     if (getHasActiveSubtask() && pluginConfig.replace_generic) {
       log(`Using default generic replacement`);
       lastGenericPart.text = pluginConfig.generic_return ?? DEFAULT_PROMPT;

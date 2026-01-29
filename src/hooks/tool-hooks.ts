@@ -19,9 +19,9 @@ import {
   setHasActiveSubtask,
   consumePendingResultCaptureByPrompt,
   registerPendingResultCapture,
+  registerPendingResultCaptureByPrompt,
   getPendingResultCapture,
   captureSubtaskResult,
-  getClient,
   setDeferredReturnPrompt,
 } from "../core/state";
 import { getConfig } from "../commands/resolver";
@@ -43,6 +43,9 @@ import {
 export async function toolExecuteBefore(input: any, output: any) {
   if (input.tool !== "task") return;
 
+  const taskSession =
+    output?.state?.sessionID ?? output?.state?.sessionId ?? input.sessionID;
+
   // Mark that we have an active subtask (for generic return replacement)
   setHasActiveSubtask(true);
 
@@ -58,24 +61,34 @@ export async function toolExecuteBefore(input: any, output: any) {
     : null;
 
   // Track parent session for inline subtasks (so tool.execute.after can find the loop state)
-  if (pendingParentSession && pendingParentSession !== input.sessionID) {
-    setSubtaskParentSession(input.sessionID, pendingParentSession);
+  if (pendingParentSession && pendingParentSession !== taskSession) {
+    setSubtaskParentSession(taskSession, pendingParentSession);
     log(
-      `tool.before: mapped subtask ${input.sessionID} -> parent ${pendingParentSession}`
+      `tool.before: mapped subtask ${taskSession} -> parent ${pendingParentSession}`
     );
   }
 
-  // Check for pending result capture (as: override) and transfer to session-based lookup
+  // Check for pending result capture (as: override)
+  // NOTE: We no longer consume here - session.idle will handle inline subtask captures
+  // because output.state is undefined for inline subtasks in tool.after
   if (prompt) {
     const pendingCapture = consumePendingResultCaptureByPrompt(prompt);
     if (pendingCapture) {
+      // Re-register by prompt so session.idle can match it
+      // We also register by session for non-inline subtasks that have output.state
       registerPendingResultCapture(
-        input.sessionID,
+        taskSession,
+        pendingCapture.parentSessionID,
+        pendingCapture.name
+      );
+      // Re-register by prompt for session.idle to match inline subtasks
+      registerPendingResultCaptureByPrompt(
+        prompt,
         pendingCapture.parentSessionID,
         pendingCapture.name
       );
       log(
-        `tool.before: registered result capture for session ${input.sessionID} as "${pendingCapture.name}"`
+        `tool.before: registered result capture for session ${taskSession} as "${pendingCapture.name}"`
       );
     }
   }
@@ -160,17 +173,19 @@ export async function toolExecuteBefore(input: any, output: any) {
  */
 export async function toolExecuteAfter(input: any, output: any) {
   if (input.tool !== "task") return;
+  const taskSession =
+    output?.state?.sessionID ?? output?.state?.sessionId ?? input.sessionID;
   const cmd = getCallState(input.callID);
 
   log(`tool.after: callID=${input.callID}, cmd=${cmd}, wasTracked=${!!cmd}`);
 
   // Check for active retry loop - inline subtasks have cmd=undefined
   // For inline subtasks, the loop state is on the PARENT session, not the subtask session
-  const parentSession = getSubtaskParentSession(input.sessionID);
-  const loopSession = parentSession || input.sessionID;
+  const parentSession = getSubtaskParentSession(taskSession);
+  const loopSession = parentSession || taskSession;
   const retryLoop = getLoopState(loopSession);
   const isInlineLoopIteration = retryLoop?.commandName === "_inline_subtask_";
-  const returnSession = isInlineLoopIteration ? loopSession : input.sessionID;
+  const returnSession = isInlineLoopIteration ? loopSession : taskSession;
 
   log(
     `tool.after: parentSession=${parentSession}, loopSession=${loopSession}, hasLoop=${!!retryLoop}, isInlineLoop=${isInlineLoopIteration}`
@@ -180,7 +195,7 @@ export async function toolExecuteAfter(input: any, output: any) {
   const isFrontmatterLoop =
     retryLoop && retryLoop.commandName !== "_inline_subtask_";
 
-  const pendingCapture = getPendingResultCapture(input.sessionID);
+  const pendingCapture = getPendingResultCapture(taskSession);
 
   if (!cmd && !isInlineLoopIteration && !isFrontmatterLoop && !pendingCapture) {
     // Already processed or not our command (and not a loop iteration)
@@ -191,35 +206,31 @@ export async function toolExecuteAfter(input: any, output: any) {
   }
   // Clean up parent session mapping
   if (parentSession) {
-    deleteSubtaskParentSession(input.sessionID);
+    deleteSubtaskParentSession(taskSession);
   }
 
   // Capture result if this subtask has an `as:` name
+  // IMPORTANT: Only use output.state.output - don't scan messages as that would
+  // pick up results from other subtasks in the same parent session
   if (pendingCapture) {
-    try {
-      const client = getClient();
-      const messages = await client.session.messages({
-        path: { id: input.sessionID },
-      });
-      // Get last assistant message text
-      const assistantMsgs = messages.data?.filter(
-        (m: any) => (m.info?.role ?? m.role) === "assistant"
-      );
-      const lastMsg = assistantMsgs?.[assistantMsgs.length - 1];
-      const resultText =
-        lastMsg?.parts
-          ?.filter((p: any) => p.type === "text")
-          ?.map((p: any) => p.text)
-          ?.join("\n") || "";
-
+    log(`tool.after: output.state = ${JSON.stringify(output?.state)}`);
+    const direct = output?.state?.output;
+    if (typeof direct === "string") {
+      const resultText = direct
+        .replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "")
+        .trim();
       if (resultText) {
-        captureSubtaskResult(input.sessionID, resultText);
+        captureSubtaskResult(taskSession, resultText);
         log(
           `tool.after: captured result for "${pendingCapture.name}" (${resultText.length} chars)`
         );
+      } else {
+        log(`tool.after: output.state.output was empty after cleanup`);
       }
-    } catch (err) {
-      log(`tool.after: failed to capture result: ${err}`);
+    } else {
+      log(
+        `tool.after: no output.state.output for "${pendingCapture.name}" capture`
+      );
     }
   }
 
