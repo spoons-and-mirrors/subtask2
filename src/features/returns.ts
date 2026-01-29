@@ -151,6 +151,9 @@ export async function executeReturn(
       try {
         log(`executeReturn: calling promptAsync for inline subtask...`);
         // Use promptAsync with subtask part to run as subtask
+        // Use start of prompt as description for better UX
+        const description =
+          prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
         const result = await client.session.promptAsync({
           path: { id: sessionID },
           body: {
@@ -159,7 +162,7 @@ export async function executeReturn(
                 type: "subtask",
                 agent: parsed.overrides.agent || "build",
                 model,
-                description: "Inline subtask",
+                description,
                 prompt,
               },
             ],

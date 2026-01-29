@@ -10,6 +10,8 @@ import {
   getConfigs,
   getClient,
   hasReturnStack,
+  peekReturnStack,
+  shiftReturnStack,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { DEFAULT_PROMPT } from "../utils/config";
@@ -240,27 +242,54 @@ export async function chatMessagesTransform(input: any, output: any) {
     // Those will be processed by session.idle hook
     const pluginConfig = getPluginConfig();
 
-    // Check if ANY session has stacked returns - if so, skip generic replacement
-    // The session.idle hook will handle them properly
-    let hasAnyStackedReturns = false;
+    // Check if ANY session has stacked returns - if so, handle the first one
+    // This replaces the summarize message with the stacked return prompt (like regular returns)
+    let stackedSessionID: string | null = null;
     for (const msg of output.messages) {
       const sessionID = msg.info?.sessionID;
       if (sessionID && hasReturnStack(sessionID)) {
-        hasAnyStackedReturns = true;
+        stackedSessionID = sessionID;
         break;
       }
     }
 
-    if (hasAnyStackedReturns) {
-      // Remove the summarize message - session.idle will handle returns
-      if (lastGenericMsgIndex >= 0) {
-        output.messages.splice(lastGenericMsgIndex, 1);
-        log(
-          `Removed summarize message - stacked returns will be processed by session.idle`
-        );
+    if (stackedSessionID) {
+      // Peek at the first stacked return array to decide how to handle it
+      const nextReturnArray = peekReturnStack(stackedSessionID);
+      const nextReturn = nextReturnArray?.[0];
+      if (nextReturn) {
+        if (nextReturn.startsWith("/")) {
+          // Command return: remove the summarize message and execute via session.idle
+          // We can't execute here because session.idle needs to handle the full stack
+          if (lastGenericMsgIndex >= 0) {
+            output.messages.splice(lastGenericMsgIndex, 1);
+            log(
+              `Removed summarize message - stacked command return will be processed by session.idle`
+            );
+          }
+        } else {
+          // Prompt return: substitute the summarize message with the return prompt
+          // This makes it visible as a user message, just like regular returns
+          const returnPrompt = shiftReturnStack(stackedSessionID);
+          if (returnPrompt) {
+            lastGenericPart.text = returnPrompt;
+            delete (lastGenericPart as Record<string, unknown>).synthetic;
+
+            // Also update the DB to make the message visible in TUI
+            makePartVisible(
+              lastGenericPart,
+              lastGenericMsg,
+              returnPrompt
+            ).catch(console.error);
+
+            log(
+              `Replaced summarize message with stacked return prompt: "${returnPrompt.substring(0, 50)}..."`
+            );
+          }
+        }
+        setHasActiveSubtask(false);
+        return;
       }
-      setHasActiveSubtask(false);
-      return;
     }
 
     if (getHasActiveSubtask() && pluginConfig.replace_generic) {
