@@ -238,11 +238,9 @@ export async function chatMessagesTransform(input: any, output: any) {
       }
     }
 
-    // Filter out inline subtask messages from the parent session's context
-    // This prevents the LLM from seeing subtask outputs and getting confused
-    // when processing subsequent return prompts
+    // Filter out summary leak messages from the assistant
+    // These are responses that summarize task tool output, which we don't want
     const filteredMessages: any[] = [];
-    let skipNextAssistant = false;
 
     const isSummaryLeak = (msg: any): boolean => {
       const parts = msg.parts || [];
@@ -259,18 +257,6 @@ export async function chatMessagesTransform(input: any, output: any) {
       });
     };
 
-    const isToolCompletionMessage = (msg: any): boolean => {
-      const parts = msg.parts || [];
-      return parts.some((p: any) => p.type === "tool");
-    };
-
-    // Check if a user message contains ONLY subtask parts (no text)
-    const isSubtaskOnlyMessage = (msg: any): boolean => {
-      const parts = msg.parts || [];
-      if (parts.length === 0) return false;
-      return parts.every((p: any) => p.type === "subtask");
-    };
-
     for (let i = 0; i < output.messages.length; i++) {
       const msg = output.messages[i];
       const role = msg.info?.role ?? msg.role;
@@ -280,37 +266,12 @@ export async function chatMessagesTransform(input: any, output: any) {
         continue;
       }
 
-      // Skip assistant messages that follow a filtered subtask-only user message
-      if (role === "assistant" && skipNextAssistant) {
-        if (isToolCompletionMessage(msg)) {
-          log(
-            `message-hooks: filtering tool completion at index ${i} (follows subtask-only)`
-          );
-          skipNextAssistant = false;
-          continue;
-        }
-        skipNextAssistant = false;
-      }
-
-      if (role === "user") {
-        // If user message is ONLY subtask parts, filter it AND its response
-        if (isSubtaskOnlyMessage(msg)) {
-          log(
-            `message-hooks: filtering subtask-only user message at index ${i}`
-          );
-          skipNextAssistant = true;
-          continue;
-        }
-        filteredMessages.push(msg);
-        continue;
-      }
-
       filteredMessages.push(msg);
     }
 
     if (filteredMessages.length !== output.messages.length) {
       log(
-        `message-hooks: filtered ${output.messages.length - filteredMessages.length} inline subtask messages`
+        `message-hooks: filtered ${output.messages.length - filteredMessages.length} summary leak messages`
       );
       // CRITICAL: Must mutate the array IN PLACE, not reassign!
       // Reassigning output.messages doesn't affect the original sessionMessages in OpenCode
