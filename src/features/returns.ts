@@ -13,6 +13,8 @@ import {
   pushReturnStack,
   registerPendingResultCaptureByPrompt,
   registerPendingMainSessionCapture,
+  setLastReturnType,
+  setPendingPromptReturn,
 } from "../core/state";
 import { getConfig } from "../commands/resolver";
 import { log } from "../utils/logger";
@@ -148,6 +150,9 @@ export async function executeReturn(
         );
       }
 
+      // Track that we just executed an inline subtask
+      setLastReturnType(sessionID, "inline_subtask");
+
       try {
         log(`executeReturn: calling promptAsync for inline subtask...`);
         // Use promptAsync with subtask part to run as subtask
@@ -239,6 +244,9 @@ export async function executeReturn(
     setSessionMainCommand(sessionID, pathKey);
     // Note: parent session registration happens in command-hooks.ts after prompt modifications
 
+    // Track that we just executed a regular command
+    setLastReturnType(sessionID, "command");
+
     try {
       await client.session.command({
         path: { id: sessionID },
@@ -249,6 +257,14 @@ export async function executeReturn(
     }
   } else {
     log(`executeReturn: prompt "${item.substring(0, 40)}..."`);
+
+    // Track that we just executed a prompt
+    setLastReturnType(sessionID, "prompt");
+
+    // Set pending for message-hooks injection (handles current LLM call)
+    setPendingPromptReturn(sessionID, item);
+
+    // Also persist via promptAsync (for history)
     await client.session.promptAsync({
       path: { id: sessionID },
       body: { parts: [{ type: "text", text: item }] },

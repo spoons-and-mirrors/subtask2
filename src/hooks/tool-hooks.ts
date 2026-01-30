@@ -60,6 +60,10 @@ export async function toolExecuteBefore(input: any, output: any) {
     ? consumePendingParentForPrompt(prompt)
     : null;
 
+  log(
+    `tool.before: taskSession=${taskSession}, prompt="${prompt?.substring(0, 30) || "(none)"}...", pendingParentSession=${pendingParentSession || "NOT FOUND"}`
+  );
+
   // Track parent session for inline subtasks (so tool.execute.after can find the loop state)
   if (pendingParentSession && pendingParentSession !== taskSession) {
     setSubtaskParentSession(taskSession, pendingParentSession);

@@ -31,7 +31,19 @@ const subtaskParentSession = new Map<string, string>();
 const pendingModelOverride = new Map<string, string>();
 const pendingAgentOverride = new Map<string, string>();
 const deferredReturnPrompt = new Map<string, string>();
-// REMOVED: lastReturnWasCommand - no longer needed with session.idle
+// Track sessions that just had a stacked return prompt substituted
+// session.idle should skip returnState processing until LLM responds
+const pendingStackedPromptResponse = new Set<string>();
+// Track the type of the last executed return to handle prompt returns correctly
+// after inline subtasks (which don't inject "Summarize..." message)
+const lastReturnType = new Map<
+  string,
+  "inline_subtask" | "command" | "prompt"
+>();
+
+// Pending prompt return to be substituted in message-hooks.ts
+// session.idle sets this, message-hooks consumes it during transform
+const pendingPromptReturn = new Map<string, string>();
 
 // Named subtask results storage: parentSessionID -> Map<name, result>
 const subtaskResults = new Map<string, Map<string, string>>();
@@ -171,6 +183,31 @@ export function popReturnStack(sessionID: string): void {
 export function hasReturnStack(sessionID: string): boolean {
   const stack = returnStack.get(sessionID);
   return stack !== undefined && stack.length > 0;
+}
+
+/**
+ * Get the entire current return chain from the stack (the top chain).
+ * Returns undefined if stack is empty.
+ * This is used to transfer stacked returns to returnState.
+ */
+export function getCurrentReturnChain(sessionID: string): string[] | undefined {
+  const stack = returnStack.get(sessionID);
+  if (!stack || stack.length === 0) return undefined;
+  return stack[stack.length - 1];
+}
+
+/**
+ * Remove the current return chain from the stack (pop it).
+ * Call this after transferring the chain to returnState.
+ */
+export function popCurrentReturnChain(sessionID: string): void {
+  const stack = returnStack.get(sessionID);
+  if (stack && stack.length > 0) {
+    stack.pop();
+    if (stack.length === 0) {
+      returnStack.delete(sessionID);
+    }
+  }
 }
 
 /**
@@ -415,9 +452,104 @@ export function consumeDeferredReturnPrompt(
   return prompt;
 }
 
-// REMOVED: lastReturnWasCommand functions - no longer needed with session.idle
-// The session.idle event fires when the session is truly idle, eliminating
-// the need to track whether a command is still running.
+// ============================================================================
+// Last Return Type Tracking
+// ============================================================================
+
+/**
+ * Set the type of the last executed return for a session.
+ * Used to determine if a prompt return should be deferred to message-hooks
+ * or executed directly (when following an inline subtask).
+ */
+export function setLastReturnType(
+  sessionID: string,
+  type: "inline_subtask" | "command" | "prompt"
+): void {
+  lastReturnType.set(sessionID, type);
+}
+
+/**
+ * Get the type of the last executed return for a session.
+ */
+export function getLastReturnType(
+  sessionID: string
+): "inline_subtask" | "command" | "prompt" | undefined {
+  return lastReturnType.get(sessionID);
+}
+
+/**
+ * Clear the last return type for a session.
+ */
+export function clearLastReturnType(sessionID: string): void {
+  lastReturnType.delete(sessionID);
+}
+
+// ============================================================================
+// Pending Stacked Prompt Response
+// ============================================================================
+
+/**
+ * Mark that a session just had a stacked return PROMPT substituted.
+ * session.idle should skip returnState processing until LLM responds.
+ */
+export function setPendingStackedPromptResponse(sessionID: string): void {
+  pendingStackedPromptResponse.add(sessionID);
+}
+
+/**
+ * Check if a session is waiting for LLM response to a stacked prompt.
+ */
+export function hasPendingStackedPromptResponse(sessionID: string): boolean {
+  return pendingStackedPromptResponse.has(sessionID);
+}
+
+/**
+ * Clear the pending stacked prompt response flag.
+ * Called when session.idle fires after the LLM has responded.
+ */
+export function clearPendingStackedPromptResponse(sessionID: string): void {
+  pendingStackedPromptResponse.delete(sessionID);
+}
+
+// ============================================================================
+// Pending Prompt Return (deferred to message-hooks.ts for substitution)
+// ============================================================================
+
+/**
+ * Set a pending prompt return to be substituted in message-hooks.ts.
+ * Called by session.idle when processing a prompt return.
+ */
+export function setPendingPromptReturn(
+  sessionID: string,
+  prompt: string
+): void {
+  pendingPromptReturn.set(sessionID, prompt);
+}
+
+/**
+ * Get and clear the pending prompt return for a session.
+ * Called by message-hooks.ts during transform to substitute the generic message.
+ */
+export function consumePendingPromptReturn(
+  sessionID: string
+): string | undefined {
+  const prompt = pendingPromptReturn.get(sessionID);
+  if (prompt) {
+    pendingPromptReturn.delete(sessionID);
+  }
+  return prompt;
+}
+
+export function clearPendingPromptReturn(sessionID: string): void {
+  pendingPromptReturn.delete(sessionID);
+}
+
+/**
+ * Check if there's a pending prompt return for substitution.
+ */
+export function hasPendingPromptReturn(sessionID: string): boolean {
+  return pendingPromptReturn.has(sessionID);
+}
 
 // ============================================================================
 // Pending Parent Session (keyed by prompt for race safety)

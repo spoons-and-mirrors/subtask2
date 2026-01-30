@@ -14,6 +14,16 @@ import {
   pushReturnStack,
   getPendingResultCaptureByPrompt,
   deletePendingResultCaptureByPrompt,
+  hasPendingStackedPromptResponse,
+  clearPendingStackedPromptResponse,
+  setPendingStackedPromptResponse,
+  setPendingPromptReturn,
+  setSubtaskParentSession,
+  getSubtaskParentSession,
+  consumePendingParentForPrompt,
+  setLastReturnType,
+  getPendingReturn,
+  deletePendingReturn,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { executeReturn } from "../features/returns";
@@ -37,72 +47,98 @@ export async function handleSessionIdle(sessionID: string) {
 
   log(`session.idle: sessionID=${sessionID}`);
 
-  // Check if this is an inline subtask session with a pending `as:` capture
-  // Match by looking at the session's first user message (the prompt)
-  try {
-    const messages = await client.session.messages({ path: { id: sessionID } });
-    const firstUserMsg = messages.data?.find(
-      (m: any) => (m.info?.role ?? m.role) === "user"
-    );
-    if (firstUserMsg) {
-      // Look for the prompt in message parts - could be subtask or text type
-      for (const part of firstUserMsg.parts ?? []) {
-        // Get the prompt content from either subtask.prompt or text.text
-        const promptContent =
-          part.type === "subtask"
-            ? part.prompt?.trim()
-            : part.type === "text"
-              ? part.text?.trim()
-              : null;
+  // 1. Resolve parent session if this is a subtask session
+  // We need to check for parent session early because returns are stored under the parent
+  let parentSessionID = getSubtaskParentSession(sessionID);
 
-        if (!promptContent) continue;
+  // If not already mapped, try to map it by looking at the first user message
+  if (!parentSessionID) {
+    try {
+      const messages = await client.session.messages({
+        path: { id: sessionID },
+      });
+      const firstUserMsg = messages.data?.find(
+        (m: any) => (m.info?.role ?? m.role) === "user"
+      );
+      if (firstUserMsg) {
+        for (const part of firstUserMsg.parts ?? []) {
+          const promptContent =
+            part.type === "subtask"
+              ? part.prompt?.trim()
+              : part.type === "text"
+                ? part.text?.trim()
+                : null;
 
-        const pendingCapture = getPendingResultCaptureByPrompt(promptContent);
-        if (pendingCapture) {
-          // Found a matching capture - get the last assistant response
-          const resultText = (() => {
-            const list = messages.data ?? [];
-            const reversed = [...list].reverse();
-            for (const msg of reversed) {
-              const role = msg.info?.role ?? msg.role;
-              if (role !== "assistant") continue;
-              const parts = msg.parts ?? [];
-              const reversedParts = [...parts].reverse();
-              for (const p of reversedParts) {
-                if (p.ignored) continue;
-                if (p.type === "text") {
-                  const text = p.text?.trim();
-                  if (text) return text;
-                }
-              }
-            }
-            return "";
-          })();
+          if (!promptContent) continue;
 
-          if (resultText) {
-            storeSubtaskResult(
-              pendingCapture.parentSessionID,
-              pendingCapture.name,
-              resultText
-            );
+          const mappedParent = consumePendingParentForPrompt(promptContent);
+          if (mappedParent && mappedParent !== sessionID) {
+            setSubtaskParentSession(sessionID, mappedParent);
+            parentSessionID = mappedParent;
             log(
-              `session.idle: captured inline subtask result for "${pendingCapture.name}" (${resultText.length} chars)`
-            );
-          } else {
-            log(
-              `session.idle: no assistant text found for "${pendingCapture.name}" capture`
+              `session.idle: mapped subtask ${sessionID} -> parent ${parentSessionID}`
             );
           }
-          deletePendingResultCaptureByPrompt(promptContent);
-          break; // Only capture once per session
+
+          // Check for pending result capture (as: override)
+          const pendingCapture = getPendingResultCaptureByPrompt(promptContent);
+          if (pendingCapture) {
+            if (pendingCapture.parentSessionID !== sessionID) {
+              setSubtaskParentSession(
+                sessionID,
+                pendingCapture.parentSessionID
+              );
+              parentSessionID = pendingCapture.parentSessionID;
+              log(
+                `session.idle: mapped subtask ${sessionID} -> parent ${parentSessionID} (from capture)`
+              );
+            }
+
+            // Capture the result
+            const resultText = (() => {
+              const list = messages.data ?? [];
+              const reversed = [...list].reverse();
+              for (const msg of reversed) {
+                const role = msg.info?.role ?? msg.role;
+                if (role !== "assistant") continue;
+                const parts = msg.parts ?? [];
+                const reversedParts = [...parts].reverse();
+                for (const p of reversedParts) {
+                  if (p.ignored) continue;
+                  if (p.type === "text") {
+                    const text = p.text?.trim();
+                    if (text) return text;
+                  }
+                }
+              }
+              return "";
+            })();
+
+            if (resultText) {
+              storeSubtaskResult(
+                pendingCapture.parentSessionID,
+                pendingCapture.name,
+                resultText
+              );
+              log(
+                `session.idle: captured inline subtask result for "${pendingCapture.name}"`
+              );
+            }
+            deletePendingResultCaptureByPrompt(promptContent);
+          }
         }
       }
+    } catch (err) {
+      log(`session.idle: failed to resolve parent session: ${err}`);
     }
-  } catch (err) {
-    log(`session.idle: failed to check for inline subtask capture: ${err}`);
   }
 
-  // Check for pending main session capture (non-subtask command with as:)
+  const targetSessionID = parentSessionID || sessionID;
+  if (targetSessionID !== sessionID) {
+    log(`session.idle: operating on targetSessionID=${targetSessionID}`);
+  }
+
+  // 2. Check for pending main session capture (non-subtask command with as:)
   const pendingCaptureName = consumePendingMainSessionCapture(sessionID);
   if (pendingCaptureName) {
     try {
@@ -137,7 +173,7 @@ export async function handleSessionIdle(sessionID: string) {
       if (resultText) {
         storeSubtaskResult(sessionID, pendingCaptureName, resultText);
         log(
-          `session.idle: captured main session result for "${pendingCaptureName}" (${resultText.length} chars)`
+          `session.idle: captured main session result for "${pendingCaptureName}"`
         );
       }
     } catch (err) {
@@ -145,14 +181,12 @@ export async function handleSessionIdle(sessionID: string) {
     }
   }
 
-  // Check for loop evaluation response (orchestrator-decides pattern)
+  // 3. Check for loop evaluation response
   const evalState = getPendingEvaluation(sessionID);
   if (evalState) {
     let decision: "break" | "continue" = "continue";
 
-    // Only parse decision if this is a conditional loop (has until condition)
     if (evalState.config.until) {
-      // Get the last assistant message to check for loop decision
       const messages = await client.session.messages({
         path: { id: sessionID },
       });
@@ -163,14 +197,12 @@ export async function handleSessionIdle(sessionID: string) {
       decision = parseLoopDecision(lastText);
       log(`loop: evaluation response decision=${decision}`);
     } else {
-      // Unconditional loop: always continue (until max reached)
       log(`loop: unconditional loop, auto-continuing`);
     }
 
     clearPendingEvaluation(sessionID);
 
     if (decision === "continue") {
-      // Increment and re-run
       incrementLoopIteration(sessionID);
       const state = getLoopState(sessionID);
       if (state) {
@@ -179,12 +211,6 @@ export async function handleSessionIdle(sessionID: string) {
         );
 
         if (state.commandName === "_inline_subtask_") {
-          // Re-execute inline subtask directly via promptAsync
-          log(
-            `loop: re-executing inline subtask with prompt "${state.arguments?.substring(0, 50)}..."`
-          );
-
-          // Build model from override if present
           let model: { providerID: string; modelID: string } | undefined;
           if (state.model?.includes("/")) {
             const [providerID, ...rest] = state.model.split("/");
@@ -210,7 +236,6 @@ export async function handleSessionIdle(sessionID: string) {
             log(`loop: inline subtask failed:`, e);
           }
         } else {
-          // Re-execute the command
           const cmdWithArgs = `/${state.commandName}${
             state.arguments ? " " + state.arguments : ""
           }`;
@@ -219,64 +244,115 @@ export async function handleSessionIdle(sessionID: string) {
         return;
       }
     } else {
-      // Break - clear the loop and continue with normal flow
       if (evalState.deferredReturns?.length) {
         pushReturnStack(sessionID, [...evalState.deferredReturns]);
-        log(
-          `loop: queued ${evalState.deferredReturns.length} deferred returns after condition satisfied`
-        );
       }
       log(`loop: breaking loop, condition satisfied`);
       clearLoop(sessionID);
     }
   }
 
-  const deferredReturn = consumeDeferredReturnPrompt(sessionID);
+  // 4. Process Returns (Priority Order)
+
+  // A. Deferred return prompt from a previous turn
+  const deferredReturn = consumeDeferredReturnPrompt(targetSessionID);
   if (deferredReturn) {
-    const resolved = resolveResultReferences(deferredReturn, sessionID);
+    const resolved = resolveResultReferences(deferredReturn, targetSessionID);
     log(
       `session.idle: executing deferred return: "${resolved.substring(0, 40)}..."`
     );
-    executeReturn(resolved, sessionID).catch(console.error);
+    executeReturn(resolved, targetSessionID).catch(console.error);
     return;
   }
 
-  // Handle non-subtask command returns
-  const pendingReturn = getPendingNonSubtaskReturns(sessionID);
-  if (pendingReturn?.length) {
-    let next = pendingReturn.shift()!;
-    if (!pendingReturn.length) deletePendingNonSubtaskReturns(sessionID);
-    // Resolve $RESULT[name] references
-    next = resolveResultReferences(next, sessionID);
+  // B. Pending first return (if message-hooks missed it)
+  const pendingFirst = getPendingReturn(targetSessionID);
+  if (pendingFirst) {
+    deletePendingReturn(targetSessionID);
+    const resolved = resolveResultReferences(pendingFirst, targetSessionID);
     log(
-      `session.idle: executing non-subtask return: "${next.substring(0, 40)}..."`
+      `session.idle: executing pendingReturn (first): "${resolved.substring(0, 40)}..."`
     );
-    executeReturn(next, sessionID).catch(console.error);
+
+    if (resolved.startsWith("/")) {
+      executeReturn(resolved, targetSessionID).catch(console.error);
+      return;
+    }
+
+    setLastReturnType(targetSessionID, "prompt");
+    setPendingStackedPromptResponse(targetSessionID);
+    try {
+      await client.session.promptAsync({
+        path: { id: targetSessionID },
+        body: { parts: [{ type: "text", text: resolved }] },
+      });
+    } catch (e) {
+      log(`session.idle: pendingReturn promptAsync failed: ${e}`);
+      clearPendingStackedPromptResponse(targetSessionID);
+    }
     return;
   }
 
-  // PRIORITY 1: Process stacked returns first (from nested inline subtasks)
-  if (hasReturnStack(sessionID)) {
-    let next = shiftReturnStack(sessionID);
+  // C. Stacked returns (from inline subtasks)
+  if (hasReturnStack(targetSessionID)) {
+    let next = shiftReturnStack(targetSessionID);
     if (next) {
-      // Resolve $RESULT[name] references
-      next = resolveResultReferences(next, sessionID);
+      next = resolveResultReferences(next, targetSessionID);
       log(
         `session.idle: executing stacked return: "${next.substring(0, 40)}..."`
       );
-      executeReturn(next, sessionID).catch(console.error);
+      executeReturn(next, targetSessionID).catch(console.error);
       return;
     }
   }
 
-  // PRIORITY 2: Process original return chain
-  const remaining = getReturnState(sessionID);
-  if (!remaining?.length) return;
+  // D. Original return chain
+  const remaining = getReturnState(targetSessionID);
+  if (remaining?.length) {
+    let next = remaining.shift()!;
+    if (!remaining.length) deleteReturnState(targetSessionID);
+    next = resolveResultReferences(next, targetSessionID);
 
-  let next = remaining.shift()!;
-  if (!remaining.length) deleteReturnState(sessionID);
-  // Resolve $RESULT[name] references
-  next = resolveResultReferences(next, sessionID);
-  log(`session.idle: executing return: "${next.substring(0, 40)}..."`);
-  executeReturn(next, sessionID).catch(console.error);
+    if (next.startsWith("/")) {
+      log(`session.idle: executing return: "${next.substring(0, 40)}..."`);
+      executeReturn(next, targetSessionID).catch(console.error);
+    } else {
+      log(
+        `session.idle: setting pending prompt return: "${next.substring(0, 40)}..."`
+      );
+      // Set pending prompt for message-hooks to inject into current LLM call
+      setPendingPromptReturn(targetSessionID, next);
+      setLastReturnType(targetSessionID, "prompt");
+
+      // Also persist the message via promptAsync so it appears in history
+      // This is needed because injection into output.messages doesn't persist
+      client.session
+        .promptAsync({
+          path: { id: targetSessionID },
+          body: { parts: [{ type: "text", text: next }] },
+        })
+        .catch((e: any) => log(`session.idle: promptAsync failed: ${e}`));
+    }
+    return;
+  }
+
+  // E. Non-subtask command returns
+  const pendingNonSubtask = getPendingNonSubtaskReturns(targetSessionID);
+  if (pendingNonSubtask?.length) {
+    let next = pendingNonSubtask.shift()!;
+    if (!pendingNonSubtask.length)
+      deletePendingNonSubtaskReturns(targetSessionID);
+    next = resolveResultReferences(next, targetSessionID);
+    log(
+      `session.idle: executing non-subtask return: "${next.substring(0, 40)}..."`
+    );
+    executeReturn(next, targetSessionID).catch(console.error);
+    return;
+  }
+
+  // 5. Cleanup
+  if (hasPendingStackedPromptResponse(targetSessionID)) {
+    clearPendingStackedPromptResponse(targetSessionID);
+    log(`session.idle: cleared pending prompt flag`);
+  }
 }
