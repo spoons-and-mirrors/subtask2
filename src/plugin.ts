@@ -1,6 +1,7 @@
 // Plugin entry point - hook registration
-import { log } from "./state";
+import { log, setConfigs } from "./state";
 import { loadConfig } from "./config";
+import { buildManifest } from "./manifest";
 import {
   commandExecuteBefore,
   setClient as setCommandClient,
@@ -27,6 +28,11 @@ export function createPlugin(client: any) {
   // Load config on plugin init
   loadConfig();
   log("Config loaded");
+
+  // Load command manifest
+  const manifest = buildManifest();
+  setConfigs(manifest);
+  log(`Loaded ${Object.keys(manifest).length} command configs`);
 
   // Set client references for all modules that need it
   setCommandClient(client);

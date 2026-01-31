@@ -2,6 +2,7 @@
 // Main entry point for command processing
 import {
   log,
+  getConfig,
   setReturnState,
   setSessionMainCommand,
   setPendingCaptureByParent,
@@ -45,6 +46,7 @@ export const commandExecuteBefore = async (input: any, output: any) => {
   // Handle /subtask command
   if (cmd === "subtask") {
     const args = input.arguments ?? "";
+    log("Processing /subtask with args:", args.slice(0, 80));
 
     // Check for CLI commands (help, alias management)
     const handled = await handleCLI(sessionID, args);
@@ -55,9 +57,16 @@ export const commandExecuteBefore = async (input: any, output: any) => {
 
     // Parse /subtask args for overrides and prompt
     const { overrides, prompt } = parseSubtaskArgs(args);
+    log(
+      "Parsed subtask - overrides:",
+      JSON.stringify(overrides),
+      "prompt:",
+      prompt.slice(0, 50)
+    );
 
     // Validate prompt is not empty
     if (!prompt.trim()) {
+      log("ERROR: Empty prompt for /subtask");
       throw new Error(
         "Missing prompt for /subtask. Usage: /subtask {overrides} prompt"
       );
@@ -65,27 +74,31 @@ export const commandExecuteBefore = async (input: any, output: any) => {
 
     // Build SubtaskPart
     const part = await buildSubtaskPart(prompt, overrides, sessionID);
+    log("Built SubtaskPart:", JSON.stringify(part).slice(0, 100));
 
     // Store return if specified (single return only for inline subtask)
     if (overrides.return) {
       setReturnState(sessionID, [overrides.return]);
+      log("Stored inline return for /subtask");
     }
 
     // Store result capture if specified
     if (overrides.as) {
       setPendingCaptureByParent(sessionID, overrides.as);
+      log("Stored capture as:", overrides.as);
     }
 
     // Replace output parts with our SubtaskPart
     output.parts = [part];
     setSessionMainCommand(sessionID, "subtask");
+    log("Set output.parts with SubtaskPart");
 
     return output;
   }
 
   // Handle regular commands with frontmatter
-  const configs = input.configs ?? {};
-  const cmdConfig = configs[cmd];
+  // Get config from manifest (loaded at startup)
+  const cmdConfig = getConfig(cmd);
   log("Checking cmdConfig for", cmd, "found:", !!cmdConfig);
 
   if (!cmdConfig?.template) {
@@ -94,7 +107,7 @@ export const commandExecuteBefore = async (input: any, output: any) => {
     return output;
   }
 
-  // Parse frontmatter
+  // Parse frontmatter from the stored template
   log("Parsing frontmatter...");
   const { config, body } = parseFrontmatter(cmdConfig.template);
   log("Parsed config:", JSON.stringify(config));

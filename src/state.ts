@@ -2,9 +2,29 @@
 // Each Map has ONE setter and ONE consumer to prevent races
 
 import { log } from "./logger";
+import type { StoredCommandConfig } from "./manifest";
 
 // Re-export logger for other modules
 export { log };
+
+// === Command Configs (loaded at startup) ===
+let configs: Record<string, StoredCommandConfig> = {};
+
+export const getConfigs = () => configs;
+export const setConfigs = (c: Record<string, StoredCommandConfig>) => {
+  configs = c;
+};
+export const getConfig = (cmd: string): StoredCommandConfig | undefined => {
+  // Try exact match first
+  if (configs[cmd]) return configs[cmd];
+
+  // Try just the filename (last segment)
+  const parts = cmd.split("/");
+  const filename = parts[parts.length - 1];
+  if (configs[filename]) return configs[filename];
+
+  return undefined;
+};
 
 // === Command Tracking ===
 // Maps tool callID to command name for identification
