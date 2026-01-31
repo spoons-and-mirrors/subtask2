@@ -42,19 +42,22 @@ This document defines the technical architecture for the v2 refactor, based on l
 
 **Responsibilities**:
 
-1. Parse frontmatter (return, parallel, model, agent)
-2. Detect `/subtask` command and build Task tool part
-3. Apply inline overrides to output
-4. Resolve $TURN in prompt
-5. Store returnState[1..n] (remaining returns)
-6. Store model/agent overrides for tool.before
+1. For `/subtask` command: handle CLI interface first
+   - No args → show help (ignored message), throw to stop
+   - `-a` flag → alias management, throw to stop
+2. Parse frontmatter (return, parallel, model, agent)
+3. Detect `/subtask` command and build SubtaskPart
+4. Resolve model aliases before applying
+5. Apply inline overrides to SubtaskPart
+6. Resolve $TURN in prompt
+7. Store returnState[1..n] (remaining returns)
 
 **State Written**:
 
 - `returnState[sessionID]` - remaining returns (index 1+)
-- `pendingModelOverride[sessionID]` - if model override present
-- `pendingAgentOverride[sessionID]` - if agent override present
 - `sessionMainCommand[sessionID]` - track which command
+
+Note: Model/agent overrides are applied directly to SubtaskPart, no pending state needed.
 
 ---
 
@@ -66,19 +69,13 @@ This document defines the technical architecture for the v2 refactor, based on l
 **Responsibilities**:
 
 1. For Task tool only: register parent session mapping
-2. Apply agent override to args.subagent_type
-3. Register result capture if {as:name} pending
+2. Register result capture if {as:name} pending
 
 **State Written**:
 
 - `subtaskParentSession[subtaskSessionID]` - maps to parent
 - `pendingResultCapture[subtaskSessionID]` - capture registration
 - `callState[callID]` - tracks tool to command mapping
-
-**State Consumed**:
-
-- `pendingAgentOverride[sessionID]`
-- (from command.before context)
 
 ---
 
@@ -201,11 +198,15 @@ const pendingResultCapture = new Map<
 const subtaskResults = new Map<string, Map<string, string>>();
 
 // === Override Application ===
-const pendingModelOverride = new Map<string, string>();
-const pendingAgentOverride = new Map<string, string>();
+// Note: Model/agent are applied directly to SubtaskPart, no Maps needed
 
 // === Config ===
-// Plugin configuration
+// Plugin configuration (persisted to file)
+interface PluginConfig {
+  replace_generic: boolean;
+  generic_return?: string;
+  model_aliases: Record<string, string>; // alias → full model ID
+}
 let pluginConfig: PluginConfig;
 ```
 
@@ -215,14 +216,12 @@ let pluginConfig: PluginConfig;
 command.execute.before
   │
   ├─→ returnState[sessionID] = [return2, return3, ...]
-  ├─→ pendingModelOverride[sessionID] = model
-  └─→ pendingAgentOverride[sessionID] = agent
+  └─→ Apply model/agent directly to SubtaskPart (no pending state)
 
 tool.execute.before
   │
   ├─→ subtaskParentSession[subtaskSID] = parentSID
-  ├─→ pendingResultCapture[subtaskSID] = {parent, name}
-  └─← consumes pendingAgentOverride
+  └─→ pendingResultCapture[subtaskSID] = {parent, name}
 
 tool.execute.after
   │
@@ -258,8 +257,6 @@ function cleanupSession(sessionID: string) {
   pendingReturns.delete(sessionID);
   pendingNonSubtaskReturns.delete(sessionID);
   sessionMainCommand.delete(sessionID);
-  pendingModelOverride.delete(sessionID);
-  pendingAgentOverride.delete(sessionID);
   subtaskResults.delete(sessionID);
 
   // Clean subtaskParentSession entries where parent is sessionID
@@ -304,14 +301,15 @@ src/
 ├── features/
 │   ├── returns.ts        # Return execution helpers
 │   ├── results.ts        # $RESULT resolution
-│   └── turns.ts          # $TURN resolution
+│   ├── turns.ts          # $TURN resolution
+│   └── aliases.ts        # Model alias resolution (NEW)
 │
 ├── parsing/
 │   ├── frontmatter.ts    # YAML parsing
 │   ├── overrides.ts      # {model:...} syntax
 │   └── commands.ts       # Command detection
 │
-└── config.ts             # Plugin config loading
+└── config.ts             # Plugin config loading + saving (for aliases)
 ```
 
 ---

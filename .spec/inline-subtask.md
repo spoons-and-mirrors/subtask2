@@ -4,6 +4,24 @@
 
 The `/subtask` command allows users to spawn ad-hoc subtasks directly from the chat input or within return chains, without creating a command file. It supports inline overrides for model, agent, and a single return.
 
+Additionally, `/subtask` provides a CLI interface for help and model alias management.
+
+---
+
+## CLI Interface
+
+See `cli-interface.md` for full details.
+
+### Quick Reference
+
+```
+/subtask                          Show help menu
+/subtask -a                       List model aliases
+/subtask -a opus provider/model   Create alias
+/subtask -a opus -d               Delete alias
+/subtask {overrides} prompt       Execute subtask
+```
+
 ---
 
 ## Syntax
@@ -21,6 +39,14 @@ Runs "tell me a joke" as a subtask with default model/agent.
 ```
 /subtask {model:openai/gpt-4o} analyze this code
 ```
+
+### With Model Alias (NEW)
+
+```
+/subtask {model:opus} analyze this code
+```
+
+Aliases are resolved before model parsing. See `cli-interface.md`.
 
 ### With Agent Override
 
@@ -56,6 +82,7 @@ Runs "tell me a joke" as a subtask with default model/agent.
 | Override                  | Purpose                               |
 | ------------------------- | ------------------------------------- |
 | `model:provider/model-id` | Override LLM model                    |
+| `model:alias`             | Override using model alias (NEW)      |
 | `agent:agent-name`        | Override agent                        |
 | `return:prompt`           | Single return prompt after completion |
 | `as:name`                 | Capture result with name for $RESULT  |
@@ -94,13 +121,16 @@ This allows OpenCode to recognize `/subtask` as a command and route it through `
 
 2. command.execute.before fires
    ├── Detect command is "subtask"
+   ├── Check for CLI commands (no args, -a flag)
+   │   └── If CLI: show help/manage aliases, throw to stop
    ├── Parse {model:x} overrides from arguments
+   ├── Resolve model aliases (NEW)
    ├── Extract prompt text
-   ├── Build Task tool call part with:
+   ├── Build SubtaskPart with:
    │   ├── model override applied
    │   ├── prompt as description
-   │   └── subtask: true equivalent
-   └── Set output.parts = [taskPart]
+   │   └── agent override if specified
+   └── Set output.parts = [subtaskPart]
 
 3. OpenCode executes the Task tool
    └── Creates new session for subtask
@@ -122,46 +152,52 @@ This allows OpenCode to recognize `/subtask` as a command and route it through `
 
 ## Output Part Structure
 
-When `/subtask` is intercepted, we build a Task tool call:
+When `/subtask` is intercepted, we build a SubtaskPart directly:
 
 ```typescript
-const taskPart = {
-  type: "tool-invocation",
-  tool: {
-    type: "tool",
-    id: "task",
-    name: "task",
-  },
-  input: {
-    description: "inline subtask",
-    prompt: resolvedPrompt, // With $TURN resolved
-    subagent_type: agentOverride || "build",
-  },
-  state: {
-    status: "pending",
-  },
+// Resolve alias first
+const resolvedModel = resolveModelAlias(modelOverride);
+const [providerID, modelID] = resolvedModel?.split("/") ?? [];
+
+const subtaskPart = {
+  type: "subtask",
+  agent: agentOverride || "build",
+  description: "inline subtask",
+  prompt: resolvedPrompt, // With $TURN resolved
+  // Model is set directly on the part (no pending state needed)
+  ...(resolvedModel && {
+    model: { providerID, modelID },
+  }),
 };
+
+output.parts = [subtaskPart];
 ```
 
-If model override is specified, we also set `pendingModelOverride[sessionID]` which is consumed in `tool.execute.before`.
+This is cleaner than building a "tool-invocation" part. OpenCode handles SubtaskPart natively.
 
 ---
 
 ## Model/Agent Override Application
 
-### How OpenCode Handles Model
+**CONFIRMED**: Model override is natively supported via `SubtaskPart.model`.
 
-Looking at the Task tool, model selection happens at the subtask session level. The hook approach:
+### Model Override
 
-1. In `command.execute.before`: Store `pendingModelOverride[sessionID] = model`
-2. In subtask's `chat.params` or `chat.message` hook: Apply override
+Set directly on the SubtaskPart:
 
-**Alternative**: If Task tool accepts model in input, pass it directly.
+```typescript
+part.model = { providerID: "openai", modelID: "gpt-4o" };
+```
 
-### Research Needed
+### Agent Override
 
-- Does Task tool `input` support a `model` field?
-- If not, how to override model for the spawned subtask session?
+Set directly on the SubtaskPart:
+
+```typescript
+part.agent = "explore"; // or "build", "general"
+```
+
+No pending state needed. Both are applied inline in `command.execute.before`.
 
 ---
 
@@ -257,26 +293,32 @@ output.parts = [
 
 ## Test Cases
 
-1. **Basic subtask**: `/subtask prompt` → Runs as subtask
-2. **Model override**: `/subtask {model:x} prompt` → Uses model x
-3. **Agent override**: `/subtask {agent:explore} prompt` → Uses explore agent
-4. **Combined**: `/subtask {model:x && agent:y} prompt` → Both applied
-5. **With return**: `/subtask {return:next} prompt` → Return fires after
-6. **With capture**: `/subtask {as:res} prompt` → Result captured
-7. **In return chain**: Used as command return → Works normally
-8. **Empty prompt**: Error handling
-9. **Invalid syntax**: Graceful degradation
+1. **Help menu**: `/subtask` → Shows help (NEW)
+2. **Alias management**: `/subtask -a opus model` → Creates alias (NEW)
+3. **Basic subtask**: `/subtask prompt` → Runs as subtask
+4. **Model override**: `/subtask {model:openai/gpt-4o} prompt` → Uses model
+5. **Model alias**: `/subtask {model:opus} prompt` → Resolves alias (NEW)
+6. **Agent override**: `/subtask {agent:explore} prompt` → Uses explore agent
+7. **Combined**: `/subtask {model:x && agent:y} prompt` → Both applied
+8. **With return**: `/subtask {return:next} prompt` → Return fires after
+9. **With capture**: `/subtask {as:res} prompt` → Result captured
+10. **In return chain**: Used as command return → Works normally
+11. **Empty prompt**: Error handling
+12. **Invalid syntax**: Graceful degradation
 
 ---
 
 ## Implementation Checklist
 
 - [ ] Register `/subtask` via config hook
+- [ ] Handle CLI interface (help, aliases) - see `cli-interface.md`
 - [ ] Parse override syntax `{key:value && ...}`
+- [ ] Resolve model aliases before parsing
 - [ ] Extract prompt text after `}`
-- [ ] Build Task tool invocation part
-- [ ] Store model/agent overrides for application
+- [ ] Build SubtaskPart (not tool-invocation)
+- [ ] Apply model/agent directly to SubtaskPart
 - [ ] Handle single `return:` override
 - [ ] Handle `as:` capture registration
 - [ ] Resolve $TURN in prompt
 - [ ] Error handling for invalid syntax
+- [ ] Throw to stop command after CLI actions

@@ -4,15 +4,25 @@
 
 Inline overrides allow changing the model or agent for any command invocation without modifying the command file. This enables multi-model workflows where different steps use different LLMs.
 
+**Model aliases** allow users to define short names for frequently used models.
+
 ---
 
 ## Syntax
 
-### Model Override
+### Model Override (Full ID)
 
 ```
 /mycommand {model:anthropic/claude-sonnet-4} arguments here
 ```
+
+### Model Override (Alias) - NEW
+
+```
+/mycommand {model:opus} arguments here
+```
+
+Aliases are defined via `/subtask -a`. See `cli-interface.md`.
 
 ### Agent Override
 
@@ -56,6 +66,28 @@ Examples:
 - github-copilot/claude-sonnet-4.5
 ```
 
+### Model Aliases (NEW)
+
+Users can define aliases for convenience:
+
+```
+/subtask -a opus github-copilot/claude-opus-4.5
+/subtask -a sonnet anthropic/claude-sonnet-4
+/subtask -a gpt openai/gpt-4o
+```
+
+Then use in any override:
+
+```
+{model:opus}
+```
+
+Aliases work in:
+
+- Inline overrides: `{model:opus}`
+- Frontmatter: `model: opus`
+- Return chains: `/cmd {model:opus}`
+
 ---
 
 ## Agent Names
@@ -96,46 +128,61 @@ Model override for subtasks requires a different approach.
 
 ---
 
-## Implementation Approaches
+## Implementation (CONFIRMED)
 
-### Approach A: Modify chat.params Hook
+**Model override is officially supported** via the `SubtaskPart.model` field.
 
-Register a `chat.params` hook that applies pending overrides:
+### The Mechanism
+
+In `command.execute.before`, when building a SubtaskPart (for `/subtask` or any `subtask: true` command):
 
 ```typescript
-"chat.params": async (input, output) => {
-  const override = pendingModelOverride.get(input.sessionID);
-  if (override) {
-    // Modify output to use override model
-    // Need to research exact mechanism
-  }
+// Resolve alias first (NEW)
+const resolvedModel = resolveModelAlias(modelString);
+
+// Parse model from resolved value
+const [providerID, modelID] = resolvedModel.split("/");
+
+// Set on the subtask part
+const subtaskPart = {
+  type: "subtask",
+  agent: agentOverride || "build",
+  description: "inline subtask",
+  prompt: resolvedPrompt,
+  model: {
+    providerID, // e.g., "openai"
+    modelID, // e.g., "gpt-4o"
+  },
+};
+
+output.parts = [subtaskPart];
+```
+
+### Alias Resolution
+
+```typescript
+function resolveModelAlias(model: string): string {
+  const aliases = getPluginConfig().model_aliases ?? {};
+  return aliases[model] ?? model; // Return alias value or original
 }
 ```
 
-**Research needed**: How does `chat.params` interact with model selection?
+### How OpenCode Uses It
 
-### Approach B: Modify Task Tool Input
-
-If we can intercept in `tool.execute.before`:
+From `session/prompt.ts`:
 
 ```typescript
-"tool.execute.before": async (input, output) => {
-  if (input.tool === "task") {
-    const modelOverride = consumeModelOverride(parentSessionID);
-    if (modelOverride) {
-      output.args.model = modelOverride; // If Task accepts this
-    }
-  }
-}
+// When subtask executes:
+const taskModel = task.model
+  ? await Provider.getModel(task.model.providerID, task.model.modelID)
+  : model; // fallback to parent model
 ```
 
-**Research needed**: Does Task tool accept a model field?
+### No Pending State Needed for Model
 
-### Approach C: Session-level Model Setting
+Since we set `part.model` directly on the SubtaskPart in `command.execute.before`, we don't need `pendingModelOverride` state. The model travels with the part itself.
 
-Check if `client.session.update()` can change the model.
-
-**Research needed**: Can session model be changed after creation?
+**Simplification**: Remove `pendingModelOverride` from state design. Model is applied inline.
 
 ---
 
@@ -201,21 +248,23 @@ function parseOverrideString(str: string): Record<string, string> {
 
 ## State Management
 
-### Pending Override Storage
+### No Pending State Needed
 
-```typescript
-// Set in command.execute.before
-pendingModelOverride.set(sessionID, modelID);
-pendingAgentOverride.set(sessionID, agentName);
+Model and agent are applied directly to SubtaskPart in command.before.
+No Maps required for overrides.
 
-// Consumed in tool.execute.before (when Task tool is called)
-const model = consumeModelOverride(sessionID);
-const agent = consumeAgentOverride(sessionID);
+### Alias Storage
+
+Aliases stored in config file, not runtime state:
+
+```jsonc
+// ~/.config/opencode/subtask2.jsonc
+{
+  "model_aliases": {
+    "opus": "github-copilot/claude-opus-4.5",
+  },
+}
 ```
-
-### Cleanup
-
-Overrides are consumed when used. If not used (no Task tool call), cleaned up with session.
 
 ---
 
@@ -268,25 +317,17 @@ Each command gets its own override, no conflicts.
 
 ---
 
-## OpenCode SDK Research Needed
-
-1. **Task tool model field**: Does `output.args` in `tool.execute.before` for Task tool accept a model field?
-
-2. **chat.params model override**: Can we change the model via this hook for a session?
-
-3. **Session update**: Does `client.session.update()` support model changes?
-
----
-
 ## Test Cases
 
-1. **Model override**: `/cmd {model:x}` → Subtask uses model x
-2. **Agent override**: `/cmd {agent:explore}` → Uses explore agent
-3. **Combined**: Both model and agent applied
-4. **In return**: Override in return chain works
-5. **Priority**: Inline > frontmatter > default
-6. **Invalid**: Graceful handling of invalid IDs
-7. **Non-subtask**: No crash, possible warning
+1. **Model override (full)**: `/cmd {model:openai/gpt-4o}` → Uses gpt-4o
+2. **Model override (alias)**: `/cmd {model:opus}` → Resolves to full ID (NEW)
+3. **Agent override**: `/cmd {agent:explore}` → Uses explore agent
+4. **Combined**: Both model and agent applied
+5. **In return**: Override in return chain works
+6. **Priority**: Inline > frontmatter > default
+7. **Invalid**: Graceful handling of invalid IDs
+8. **Non-subtask**: No crash, possible warning
+9. **Unknown alias**: Passed through as-is, OC handles error
 
 ---
 
@@ -294,9 +335,8 @@ Each command gets its own override, no conflicts.
 
 - [ ] Parse `{...}` override syntax
 - [ ] Extract model and agent values
-- [ ] Store pending overrides (command.before)
-- [ ] Research model application mechanism
-- [ ] Apply agent override in tool.before
-- [ ] Apply model override (pending research)
-- [ ] Handle priority correctly
-- [ ] Cleanup unused overrides
+- [ ] Resolve model aliases before splitting provider/model
+- [ ] Apply model directly to SubtaskPart.model in command.before
+- [ ] Apply agent to SubtaskPart.agent in command.before
+- [ ] Handle priority correctly (inline > frontmatter > default)
+- [ ] Graceful error handling for invalid model/agent
