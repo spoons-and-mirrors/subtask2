@@ -86,13 +86,18 @@ export const commandExecuteBefore = async (input: any, output: any) => {
   // Handle regular commands with frontmatter
   const configs = input.configs ?? {};
   const cmdConfig = configs[cmd];
+  log("Checking cmdConfig for", cmd, "found:", !!cmdConfig);
+
   if (!cmdConfig?.template) {
     // No template, nothing to process
+    log("No template found for command, returning");
     return output;
   }
 
   // Parse frontmatter
+  log("Parsing frontmatter...");
   const { config, body } = parseFrontmatter(cmdConfig.template);
+  log("Parsed config:", JSON.stringify(config));
 
   // Check for inline overrides in arguments
   const args = input.arguments ?? "";
@@ -154,6 +159,7 @@ export const commandExecuteBefore = async (input: any, output: any) => {
     if (returns.length > 0) {
       // First return will be handled by tool.after → pendingReturns
       // So we store all returns, tool.after will shift the first one
+      log("Storing returnState for", sessionID, "count:", returns.length);
       setReturnState(sessionID, returns);
     }
 

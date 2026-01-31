@@ -52,6 +52,12 @@ export const messagesTransform = async (input: any, output: any) => {
 
   // Check for pending return
   const pendingReturn = getPendingReturn(targetSessionID);
+  log(
+    "Checking pendingReturn for",
+    targetSessionID,
+    "found:",
+    pendingReturn ? "yes" : "no"
+  );
 
   if (pendingReturn) {
     deletePendingReturn(targetSessionID);

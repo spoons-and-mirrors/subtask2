@@ -1,6 +1,11 @@
 // State management for Subtask2 plugin
 // Each Map has ONE setter and ONE consumer to prevent races
 
+import { log } from "./logger";
+
+// Re-export logger for other modules
+export { log };
+
 // === Command Tracking ===
 // Maps tool callID to command name for identification
 const callState = new Map<string, string>();
@@ -26,13 +31,6 @@ const subtaskParentSession = new Map<string, string>();
 const pendingCaptureByParent = new Map<string, string>(); // parentSID → captureName
 // Stored results by parent session
 const subtaskResults = new Map<string, Map<string, string>>();
-
-// === Logging ===
-export const log = (...args: unknown[]) => {
-  if (process.env.DEBUG) {
-    console.log("[subtask2]", ...args);
-  }
-};
 
 // === Getters and Setters ===
 

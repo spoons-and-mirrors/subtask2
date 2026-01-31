@@ -72,8 +72,16 @@ export const toolExecuteAfter = async (input: any, output: any) => {
 
   // Handle first return - shift from returnState to pendingReturns
   const returns = getReturnState(parentSessionID);
+  log(
+    "tool.after checking returns for",
+    parentSessionID,
+    "found:",
+    returns?.length ?? 0
+  );
+
   if (returns && returns.length > 0) {
     const firstReturn = returns.shift()!;
+    log("Setting pendingReturn:", firstReturn.slice(0, 50));
     setPendingReturn(parentSessionID, firstReturn);
 
     if (returns.length === 0) {
