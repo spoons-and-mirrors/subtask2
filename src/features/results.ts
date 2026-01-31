@@ -1,48 +1,28 @@
-import { getAllSubtaskResults } from "../core/state";
-import { log } from "../utils/logger";
+// Result capture and resolution
+import { getSubtaskResults, log } from "../state";
 
 /**
- * Pattern to match $RESULT[name] references
- */
-const RESULT_PATTERN = /\$RESULT\[([^\]]+)\]/g;
-
-/**
- * Check if text contains $RESULT[name] references
+ * Check if text contains $RESULT references
  */
 export function hasResultReferences(text: string): boolean {
-  // Reset lastIndex since we're reusing the regex
-  RESULT_PATTERN.lastIndex = 0;
-  return RESULT_PATTERN.test(text);
+  return /\$RESULT\[/.test(text);
 }
 
 /**
- * Resolve all $RESULT[name] references in text
- * Replaces each reference with the stored result or a placeholder if not found
+ * Resolve $RESULT[name] references in text
  */
-export function resolveResultReferences(
-  text: string,
-  sessionID: string
-): string {
-  // Reset lastIndex since we're reusing the regex
-  RESULT_PATTERN.lastIndex = 0;
+export function resolveResults(text: string, sessionID: string): string {
+  if (!hasResultReferences(text)) return text;
 
-  // Check if there are any references first
-  if (!RESULT_PATTERN.test(text)) return text;
+  const results = getSubtaskResults(sessionID);
 
-  const results = getAllSubtaskResults(sessionID);
-
-  // Reset again after test()
-  RESULT_PATTERN.lastIndex = 0;
-
-  return text.replace(RESULT_PATTERN, (match, name) => {
-    const result = results?.get(name);
-    if (result) {
-      log(
-        `resolveResultReferences: resolved $RESULT[${name}] (${result.length} chars)`
-      );
-      return result;
+  return text.replace(/\$RESULT\[([^\]]+)\]/g, (match, name) => {
+    const value = results?.get(name);
+    if (value) {
+      log("Resolved $RESULT[" + name + "]");
+      return value;
     }
-    log(`resolveResultReferences: $RESULT[${name}] not found`);
+    log("Result not found:", name);
     return `[Result '${name}' not found]`;
   });
 }

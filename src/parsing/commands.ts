@@ -1,154 +1,93 @@
-import { parseOverridesString, type CommandOverrides } from "./overrides";
+// Command detection and parsing
 
-export interface ParsedCommand {
-  command: string;
-  arguments?: string;
-  overrides: CommandOverrides;
-  isInlineSubtask?: boolean; // true for /subtask {...} prompt syntax
+import { parseOverrides, type ParsedOverrides } from "./overrides";
+
+// Check if string is a command (starts with /)
+export const isCommand = (text: string): boolean => {
+  return text.trim().startsWith("/");
+};
+
+interface ParsedCommand {
+  name: string;
+  args: string;
 }
 
-/**
- * Parse a command string with optional overrides: /cmd {model:provider/model-id} args
- * Also supports inline subtask syntax: /subtask {loop:5,until:condition} prompt text
- * Syntax: /command {key:value,key2:value2} arguments
- * (No-space form is also supported for compatibility.)
- */
-export function parseCommandWithOverrides(input: string): ParsedCommand {
-  const trimmed = input.trim();
+// Parse command string into name + args
+export const parseCommand = (text: string): ParsedCommand | null => {
+  const trimmed = text.trim();
 
-  if (!trimmed.startsWith("/")) {
-    return { command: trimmed, overrides: {} };
+  if (!trimmed.startsWith("/")) return null;
+
+  // Find command name (everything up to first space or end)
+  const spaceIdx = trimmed.indexOf(" ");
+
+  if (spaceIdx === -1) {
+    // Just command, no args: "/mycommand"
+    return { name: trimmed.slice(1), args: "" };
   }
 
-  // Check for inline subtask syntax: /subtask {...} prompt (case-insensitive)
-  const subtaskMatch = trimmed.match(/^\/[sS][uU][bB][tT][aA][sS][kK]\b/s);
-  if (subtaskMatch) {
-    const rest = trimmed.slice(subtaskMatch[0].length).trimStart();
-    if (rest.startsWith("{")) {
-      const inlineParsed = parseInlineSubtask(rest);
-      if (inlineParsed) {
-        return {
-          command: "", // No command - inline prompt
-          arguments: inlineParsed.prompt,
-          overrides: inlineParsed.overrides,
-          isInlineSubtask: true,
-        };
-      }
-    }
-  }
+  // Command with args: "/mycommand args here"
+  return {
+    name: trimmed.slice(1, spaceIdx),
+    args: trimmed.slice(spaceIdx + 1).trim(),
+  };
+};
 
-  // Match: /command {overrides} or /command
-  const match = trimmed.match(/^\/([a-zA-Z0-9_\-\/]+)(.*)$/s);
+interface ParsedCommandWithOverrides {
+  name: string;
+  args: string;
+  overrides: ParsedOverrides;
+}
 
-  if (!match) {
-    // Fallback: just split on first space
-    const [cmd, ...rest] = trimmed.slice(1).split(/\s+/);
-    return {
-      command: cmd,
-      arguments: rest.join(" ") || undefined,
-      overrides: {},
-    };
-  }
+// Parse command with inline overrides
+// "/mycommand {model:x} args" → { name, args, overrides }
+export const parseCommandWithOverrides = (
+  text: string
+): ParsedCommandWithOverrides | null => {
+  const parsed = parseCommand(text);
+  if (!parsed) return null;
 
-  const [, commandName, rawRest] = match;
-  const rest = rawRest || "";
-  const trimmedRest = rest.trimStart();
-  let overrides: CommandOverrides = {};
-  let args = trimmedRest;
-
-  if (trimmedRest.startsWith("{")) {
-    const extracted = extractOverrideBlock(trimmedRest);
-    if (extracted) {
-      overrides = parseOverridesString(extracted.overrideStr);
-      args = extracted.rest.trimStart();
-    }
-  }
+  // Check if args contain overrides
+  const overrides = parseOverrides(parsed.args);
 
   return {
-    command: commandName,
-    arguments: args || undefined,
+    name: parsed.name,
+    args: overrides.remainder,
     overrides,
   };
-}
+};
 
-export interface ParsedInlineSubtask {
-  prompt: string;
-  overrides: CommandOverrides;
-}
+// Extract just the command name from a command string
+export const extractCommandName = (text: string): string | null => {
+  const parsed = parseCommand(text);
+  return parsed?.name ?? null;
+};
 
-export interface ParsedArgsWithOverrides {
-  overrides: CommandOverrides;
-  rest: string;
-}
+// Check if text is a /subtask command
+export const isSubtaskCommand = (text: string): boolean => {
+  const name = extractCommandName(text);
+  return name === "subtask";
+};
 
-/**
- * Parse /subtask {...} prompt inline subtask syntax
- * Input should NOT include the /subtask prefix
- * Returns null if not valid inline subtask syntax
- */
-export function parseInlineSubtask(input: string): ParsedInlineSubtask | null {
-  const trimmed = input.trim();
+// Parse /subtask command arguments
+// Returns the parsed overrides and prompt text
+export const parseSubtaskArgs = (
+  args: string
+): { overrides: ParsedOverrides; prompt: string } => {
+  const overrides = parseOverrides(args);
+  return {
+    overrides,
+    prompt: overrides.remainder,
+  };
+};
 
-  // Must start with {
-  if (!trimmed.startsWith("{")) return null;
+// Parse pipe-separated arguments for parallel commands
+// "main args || pipe1 || pipe2" → ["main args", "pipe1", "pipe2"]
+export const parsePipeArgs = (text: string): string[] => {
+  return text.split(/\s*\|\|\s*/).map(s => s.trim());
+};
 
-  const extracted = extractOverrideBlock(trimmed);
-  if (!extracted) return null;
-
-  const overrideStr = extracted.overrideStr;
-  const prompt = extracted.rest.trim();
-
-  if (!prompt) return null;
-
-  // Reuse centralized override parsing logic
-  const overrides = parseOverridesString(overrideStr);
-
-  return { prompt, overrides };
-}
-
-/**
- * Parse a leading override block from arguments ("{...} rest")
- */
-export function parseOverridesFromArgs(
-  input: string
-): ParsedArgsWithOverrides | null {
-  const trimmed = input.trimStart();
-  if (!trimmed.startsWith("{")) return null;
-
-  const extracted = extractOverrideBlock(trimmed);
-  if (!extracted) return null;
-
-  const overrides = parseOverridesString(extracted.overrideStr);
-  const rest = extracted.rest.trimStart();
-  return { overrides, rest };
-}
-
-function extractOverrideBlock(
-  input: string
-): { overrideStr: string; rest: string } | null {
-  if (!input.startsWith("{")) return null;
-
-  // Find matching closing brace (handle nested braces)
-  let depth = 0;
-  let braceEnd = -1;
-  for (let i = 0; i < input.length; i++) {
-    if (input[i] === "{") {
-      depth++;
-    } else if (input[i] === "}") {
-      depth--;
-      if (depth === 0) {
-        braceEnd = i;
-        break;
-      }
-    }
-  }
-
-  if (braceEnd === -1) return null;
-
-  const overrideStr = input.substring(1, braceEnd);
-  const rest = input.substring(braceEnd + 1);
-  return { overrideStr, rest };
-}
-
-// Re-export CommandOverrides for convenience
-export type { CommandOverrides };
+// Check if command has pipe args
+export const hasPipeArgs = (text: string): boolean => {
+  return text.includes("||");
+};

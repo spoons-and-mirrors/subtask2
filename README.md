@@ -8,9 +8,9 @@ This plugin allows your opencode `/commands` to:
 
 - **Chain** `prompts`, `/commands` and `subagents` seamlessly
 - **Relay** subagent results or session context to other subagents
-- **Loop** or **parallelize** subagents
 - **Run** commands on the fly with the `/subtask` command
-- **Override** `/commands` parameters inline (model, agent, return, parallel...)
+- **Override** `/commands` parameters inline (model, agent, return...)
+- **Alias** models for quick access (`/subtask -a opus github-copilot/claude-opus-4.5`)
 
 If you already use opencode `/commands`, you'll be right at home, if not, start with [this page](https://opencode.ai/docs/commands/)
 
@@ -29,13 +29,15 @@ If you already use opencode `/commands`, you'll be right at home, if not, start 
 ### Key Features
 
 - `return` instruct main session on command/subtask(s) result
-- `loop` loop subtask until user condition is met
-- `parallel` run subtasks concurrently - _pending PR_
 - `$TURN[n]` pass session turns (user/assistant messages)
 - `{as:name}` + `$RESULT[name]` capture and reference subtask outputs
 - Inline syntax for model, agent, and ad-hoc subtasks
+- Model aliases for quick model switching
 
-Requires [this PR](https://github.com/sst/opencode/pull/6478) for the `parallel` feature
+### Coming Soon
+
+- `loop` loop subtask until user condition is met - _in development_
+- `parallel` run subtasks concurrently - _pending [PR #6478](https://github.com/sst/opencode/pull/6478)_
 
 ---
 
@@ -78,160 +80,19 @@ Design the auth system for $ARGUMENTS
 
 **How return prompts work:**
 
-When a `subtask: true` completes, OpenCode normally injects a hidden synthetic user message asking the model to "summarize the task tool output..." - Subtask2 completely removes this message and handles returns differently:
+When a `subtask: true` completes, OpenCode injects a synthetic user message asking the model to "summarize the task tool output..." - Subtask2 intercepts this and replaces it with your return prompt.
 
-- **Prompt returns**: Fired as **real user messages** visible in your conversation. You'll see the return prompt appear as if you typed it.
+- **Prompt returns**: The synthetic message text is replaced with your prompt. The LLM responds to your prompt instead of summarizing.
 - **Command returns** (starting with `/`): The command executes immediately.
 
-This gives you full visibility into what's driving the agent's next action.
-
-`/commands` are executed as full commands with their own `parallel` and `return`
+`/commands` are executed as full commands with their own `return` chains.
 
 </details>
 
 <details>
-<summary><strong>2. <code>loop</code> - Repeat until condition is met</strong></summary>
+<summary><strong>2. Context & Results - <code>$TURN</code>, <code>{as:name}</code>, <code>$RESULT</code></strong></summary>
 
-### 2. `loop` - Repeat until condition is met
-
-Run a command repeatedly, either a fixed number of times or until a condition is satisfied.
-
-**Unconditional loop (fixed iterations):**
-
-```bash
-/generate-tests {loop:5} generate unit tests for auth module
-```
-
-Runs exactly 5 times with no evaluation - the main session just yields between iterations.
-
-**Conditional loop (with evaluation):**
-
-```bash
-/fix-tests {loop:10 && until:all tests pass with good coverage}
-```
-
-**Frontmatter:**
-
-```yaml
----
-loop:
-  max: 10
-  until: "all features implemented correctly"
----
-Implement the auth system.
-```
-
-**In return chains:**
-
-```yaml
-return:
-  - /implement-feature
-  - /fix-tests {loop:5 && until:tests are green}
-  - /commit
-```
-
-**How it works (orchestrator-decides pattern):**
-
-1. Subtask runs and completes
-2. Main session receives evaluation prompt with the condition
-3. Main LLM evaluates: reads files, checks git, runs tests if needed
-4. Responds with `<subtask2 loop="break"/>` (satisfied) or `<subtask2 loop="continue"/>` (more work needed)
-5. If continue → loop again. If break → proceed to next step
-6. Max iterations is a safety net
-
-**Why this works:**
-
-- The main session (orchestrator) has full context of what was done
-- It can verify by reading actual files, git diff, test output
-- No fake "DONE" markers - real evaluation of real conditions
-- The `until:` is a human-readable condition, not a magic keyword
-
-**Best practices:**
-
-- Write clear conditions: `until: "tests pass"` not `until: "DONE"`
-- Always set a reasonable `max` as a safety net
-- The condition is shown to the evaluating LLM verbatim
-
-**Priority:** inline `{loop:...}` > frontmatter `loop:`
-
-</details>
-
-<details>
-<summary><strong>3. <code>parallel</code> - Run subtasks concurrently</strong></summary>
-
-### 3. `parallel` - Run subtasks concurrently
-
-Spawn additional command subtasks alongside the main one:
-
-`plan.md`
-
-```yaml
-subtask: true
-parallel:
-  - /plan-gemini
-  - /plan-opus
-return:
-  - Compare and challenge the plans, keep the best bits and make a unified proposal
-  - Critically review the plan directly against what reddit has to say about it
----
-Plan a trip to $ARGUMENTS.
-```
-
-This runs 3 subtasks in parallel:
-
-1. The main command (`plan.md`)
-2. `plan-gemini`
-3. `plan-opus`
-
-When ALL complete, the main session receives the `return` prompt of the main command
-
-### With custom arguments per command
-
-You can pass arguments inline when using the command with `||` separators.
-Pipe segments map in chronological order: main → parallels → return /commands
-
-```bash
-/mycommand main args || pipe1 || pipe2 || pipe3
-```
-
-and/or
-
-```yaml
-parallel:
-  - command: research-docs
-    arguments: authentication flow
-  - command: research-codebase
-    arguments: auth middleware implementation
-  - /security-audit
-return: Synthesize all findings into an implementation plan.
-```
-
-- `research-docs` gets "authentication flow" as `$ARGUMENTS`
-- `research-codebase` gets "auth middleware implementation"
-- `security-audit` inherits the main command's `$ARGUMENTS`
-
-You can use `/command args` syntax for inline arguments:
-
-```yaml
-parallel: /security-review focus on auth, /perf-review check db queries
-```
-
-Or for all commands to inherit the main `$ARGUMENTS`:
-
-```yaml
-parallel: /research-docs, /research-codebase, /security-audit
-```
-
-**Note:** Parallel commands are forced into subtasks regardless of their own `subtask` setting. Their `return` are ignored - only the parent's `return` applies. Nested parallels are automatically flattened with a **maximum depth of 5** to prevent infinite recursion.
-
-#### Priority: pipe args > frontmatter args > inherit main args
-
-</details>
-
-<details>
-<summary><strong>4. Context & Results - <code>$TURN</code>, <code>{as:name}</code>, <code>$RESULT</code></strong></summary>
-
-### 4. Context & Results
+### 2. Context & Results
 
 Pass conversation context to subtasks and capture their outputs for later use.
 
@@ -239,7 +100,7 @@ Pass conversation context to subtasks and capture their outputs for later use.
 
 #### `$TURN[n]` - Reference previous conversation turns
 
-Use `$TURN[n]` to inject the last N conversation turns (user + assistant messages) into your command. This is powerful for commands that need context from the ongoing conversation.
+Use `$TURN[n]` to inject the last N conversation turns into your command. A "turn" is the last meaningful text output from each agent in the conversation.
 
 ```yaml
 ---
@@ -253,10 +114,10 @@ $TURN[10]
 
 **Syntax options:**
 
-- `$TURN[6]` - last 6 messages
-- `$TURN[:3]` - just the 3rd message from the end
-- `$TURN[:2:5:8]` - specific messages at indices 2, 5, and 8
-- `$TURN[*]` - all messages in the session
+- `$TURN[6]` - last 6 turns (in chronological order)
+- `$TURN[:3]` - just the 3rd turn from the end
+- `$TURN[:2:5:8]` - specific turns at indices 2, 5, and 8
+- `$TURN[*]` - all turns in the session
 
 **Usage in arguments:**
 
@@ -282,28 +143,13 @@ Works in:
 
 - Command body templates
 - Command arguments
-- Parallel command prompts
-- Piped arguments (`||`)
+- Return prompts
 
 ---
 
 #### `{as:name}` and `$RESULT[name]` - Named results
 
-Capture command outputs and reference them later in return chains. Works with any command type - subtasks, parallel commands, inline subtasks, and even regular non-subtask commands.
-
-**Multi-model comparison with named results:**
-
-```yaml
-subtask: true
-parallel:
-  - /plan {model:anthropic/claude-sonnet-4 && as:claude-plan}
-  - /plan {model:openai/gpt-4o && as:gpt-plan}
-return:
-  - /deep-analysis {as:analysis}
-  - "Compare $RESULT[claude-plan] vs $RESULT[gpt-plan] using insights from $RESULT[analysis]"
-```
-
-This runs two planning subtasks with different models, then a deep analysis, then compares all three results in the final return.
+Capture command outputs and reference them later in return chains.
 
 **In return chains:**
 
@@ -335,9 +181,9 @@ return:
 </details>
 
 <details>
-<summary><strong>5. Inline Syntax - Overrides and ad-hoc subtasks</strong></summary>
+<summary><strong>3. Inline Syntax - Overrides and ad-hoc subtasks</strong></summary>
 
-### 5. Inline Syntax
+### 3. Inline Syntax
 
 Override command parameters or create subtasks on the fly without modifying command files.
 
@@ -354,11 +200,17 @@ Override the model for any command invocation:
 ```yaml
 return:
   - /plan {model:github-copilot/claude-sonnet-4.5}
-  - /plan {model:openai/gpt-5.2}
+  - /plan {model:openai/gpt-4o}
   - Compare both plans and pick the best approach
 ```
 
-This lets you reuse a single command template with different models - no need to duplicate commands just to change the model.
+**Model Aliases:** You can use short aliases instead of full model IDs:
+
+```bash
+/plan {model:opus} design auth system
+```
+
+See section 4 for how to create aliases.
 
 ---
 
@@ -373,7 +225,7 @@ Override the agent for any command invocation:
 ```yaml
 return:
   - /implement {agent:build}
-  - /review {agent:plan}
+  - /review {agent:explore}
 ```
 
 ---
@@ -383,41 +235,37 @@ return:
 Use `&&` to combine multiple overrides:
 
 ```bash
-/plan {model:openai/gpt-4o && agent:build} implement the feature
+/plan {model:opus && agent:build && as:plan} implement the feature
 ```
 
 ---
 
 #### `/subtask {...} prompt` - Ad-hoc subtasks
 
-Create a subtask directly in return chains or chat without needing a command file. Use `/subtask {...}` (with a space before the brace) followed by your prompt:
+Create a subtask directly in return chains or chat without needing a command file:
 
 ```yaml
 return:
-  - /subtask {loop:10 && until:tests pass} Fix failing tests and run the suite
   - /subtask {model:openai/gpt-4o && agent:build} Implement the feature
   - Summarize what was done
 ```
 
-**Combining all overrides:**
+**With result capture:**
 
 ```yaml
 return:
-  - /subtask {model:anthropic/claude-sonnet-4 && agent:build && loop:5 && until:all done} Implement and verify the auth system
+  - /subtask {model:opus && as:analysis} Analyze the codebase
+  - Based on $RESULT[analysis], implement the feature
 ```
 
-**Inline returns** - chain returns directly within inline subtasks:
+**With single return:**
 
 ```yaml
 return:
-  - /subtask {return:validate the output || run tests || deploy} implement the feature
+  - /subtask {model:opus && return:validate the output} implement the feature
 ```
 
-Returns execute in order after the subtask completes, before continuing with the parent chain.
-
-**Syntax:** `/subtask {key:value && ...} prompt text`. Use `&&` to separate parameters, and `||` to separate multi-value params like `return` and `parallel`.
-
-**Important:** The space between `/subtask` and `{` is required for instant execution.
+**Syntax:** `/subtask {key:value && ...} prompt text`
 
 ---
 
@@ -426,34 +274,96 @@ Returns execute in order after the subtask completes, before continuing with the
 For simple subtasks without overrides:
 
 ```bash
-/subtask tell me a joke                                                # simple subtask
-/subtask {model:openai/gpt-4o} analyze this code                       # with model override
-/subtask {agent:build && loop:3 && until:all tests pass} fix tests     # with agent + loop
+/subtask tell me a joke
+/subtask {model:openai/gpt-4o} analyze this code
+/subtask {agent:explore && as:findings} find auth patterns
 ```
-
-This lets you spawn ad-hoc subtasks without creating command files or using return chains.
-
-Subtask2 registers `/subtask` via the plugin config hook. No manual command file is needed.
 
 </details>
 
 <details>
-<summary><strong>6. OpenCode's Generic Message</strong></summary>
+<summary><strong>4. <code>/subtask</code> CLI - Help and Model Aliases</strong></summary>
 
-### 6. OpenCode's Generic Message
+### 4. `/subtask` CLI - Help and Model Aliases
+
+The `/subtask` command includes a CLI for help and model alias management.
+
+---
+
+#### Help
+
+Run `/subtask` with no arguments to see usage:
+
+```bash
+/subtask
+```
+
+Shows available overrides, examples, and current model aliases.
+
+---
+
+#### Model Aliases
+
+Create short names for frequently used models:
+
+**Create/update alias:**
+
+```bash
+/subtask -a opus github-copilot/claude-opus-4.5
+/subtask -a sonnet anthropic/claude-sonnet-4
+/subtask -a gpt openai/gpt-4o
+```
+
+**List aliases:**
+
+```bash
+/subtask -a
+```
+
+**Delete alias:**
+
+```bash
+/subtask -a opus -d
+```
+
+**Using aliases:**
+
+Once defined, use the short name anywhere you'd use a model ID:
+
+```bash
+/subtask {model:opus} analyze this code
+/mycommand {model:sonnet && agent:build} do the thing
+```
+
+Or in frontmatter:
+
+```yaml
+model: opus
+subtask: true
+---
+Your prompt here
+```
+
+Aliases are stored in `~/.config/opencode/subtask2.jsonc`.
+
+</details>
+
+<details>
+<summary><strong>5. OpenCode's Generic Message</strong></summary>
+
+### 5. OpenCode's Generic Message
 
 When a `subtask: true` command completes, OpenCode injects a synthetic user message asking the model to "summarize the task tool output..." This message is hidden from the user but visible to the model.
 
-**Subtask2 completely removes this message from the conversation history**, whether or not you define a `return` prompt. This prevents the generic summarization behavior and gives you full control over what happens next.
+**Subtask2 intercepts this message** and replaces it with your `return` prompt (or a configurable default).
 
 **When `return` is defined:**
 
-- The synthetic message is removed from history
-- For prompt returns: a **real user message** (visible to you) is sent with the return prompt
-- For `/command` returns: the command executes immediately
+- The synthetic message text is replaced with your first return prompt
+- Remaining returns fire after each LLM response
 
 **When `return` is not defined:**
-If `replace_generic` is enabled (default), subtask2 still removes the synthetic message and fires a fallback prompt:
+If `replace_generic` is enabled (default), subtask2 replaces the synthetic message with a fallback prompt:
 
 > Review, challenge and verify the task tool output above against the codebase. Then validate or revise it, before continuing with the next logical step.
 
@@ -466,6 +376,12 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 
   // Custom fallback (optional - has built-in default)
   "generic_return": "custom return prompt",
+
+  // Model aliases
+  "model_aliases": {
+    "opus": "github-copilot/claude-opus-4.5",
+    "sonnet": "anthropic/claude-sonnet-4",
+  },
 }
 ```
 
@@ -476,42 +392,22 @@ Configure in `~/.config/opencode/subtask2.jsonc`:
 <details>
 <summary><strong>Examples</strong></summary>
 
-**Parallel subtask with different models (A/B/C plan comparison)**
+**Two-step planning and validation**
 
 ```yaml
 ---
-description: multi-model ensemble, 3 models plan in parallel, best ideas unified
-model: github-copilot/claude-opus-4.5
-subtask: true
-parallel: /plan-gemini, /plan-gpt
-return:
-  - Compare all 3 plans and validate each directly against the codebase. Pick the best ideas from each and create a unified implementation plan.
-  - /review-plan focus on simplicity and correctness
----
-Plan the implementation for the following feature
-> $ARGUMENTS
-```
-
-**Isolated "Plan" mode**
-
-```yaml
----
-description: two-step implementation planning and validation
+description: plan then validate
 agent: build
 subtask: true
 return:
   - Challenge, verify and validate the plan by reviewing the codebase directly. Then approve, revise, or reject the plan. Implement if solid
   - Take a step back, review what was done/planned for correctness, revise if needed
 ---
-In this session you WILL ONLY PLAN AND NOT IMPLEMENT. You are to take the `USER INPUT` and research the codebase until you have gathered enough knowledge to elaborate a full fledged implementation plan
+In this session you WILL ONLY PLAN AND NOT IMPLEMENT. Research the codebase until you have gathered enough knowledge to elaborate a full implementation plan.
 
-You MUST consider alternative paths and keep researching until you are confident you found the BEST possible implementation
+Consider alternative paths and keep researching until you are confident you found the BEST possible implementation.
 
-BEST often means simple, lean, clean, low surface and coupling
-Make it practical, maintainable and not overly abstracted
-
-Follow your heart
-> DO NOT OVERENGINEER SHIT
+BEST often means simple, lean, clean, low surface and coupling.
 
 USER INPUT
 $ARGUMENTS
@@ -523,7 +419,7 @@ $ARGUMENTS
 ---
 description: design, implement, test, document
 agent: build
-model: github-copilot/claude-opus-4.5
+model: opus
 subtask: true
 return:
   - Implement the component following the conceptual design specifications.
@@ -535,21 +431,55 @@ Conceptually design a React modal component with the following requirements
 > $ARGUMENTS
 ```
 
-**Inline subtask with parallel and nested models**
+**Multi-model comparison with result capture**
 
-```bash
-/subtask {parallel: /subtask {model:anthropic/claude-opus-4.5} || /subtask {model:openai/gpt-5.2} && return:Compare both outputs and synthesize the best approach} Design the auth system architecture
+```yaml
+---
+subtask: true
+return:
+  - /subtask {model:opus && as:opus-plan} Plan the auth system
+  - /subtask {model:gpt && as:gpt-plan} Plan the auth system
+  - "Compare $RESULT[opus-plan] vs $RESULT[gpt-plan] and pick the best approach"
+---
+We need to implement authentication for our API.
 ```
 
-This runs 3 subtasks:
+</details>
 
-1. Main task with `agent:build`
-2. Parallel subtask with Claude Sonnet
-3. Parallel subtask with GPT-4o
+---
 
-After all complete, the `return` prompt synthesizes the results.
+### Coming Soon
+
+<details>
+<summary><strong>Loop (in development)</strong></summary>
+
+Run a command repeatedly until a condition is met:
+
+```yaml
+loop:
+  max: 10
+  until: "all tests pass"
+```
 
 </details>
+
+<details>
+<summary><strong>Parallel (pending PR)</strong></summary>
+
+Run multiple subtasks concurrently:
+
+```yaml
+parallel:
+  - /plan-gemini
+  - /plan-opus
+return: Compare and unify the plans
+```
+
+Requires [PR #6478](https://github.com/sst/opencode/pull/6478) to be merged.
+
+</details>
+
+---
 
 **Contributing**: By submitting a PR, you assign copyright to spoons-and-mirrors. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

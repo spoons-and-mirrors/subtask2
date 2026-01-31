@@ -377,18 +377,18 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
 
 ### Minimum Viable (Phases 1-5)
 
-- [ ] Plugin loads without errors
-- [ ] `/subtask` command works
-- [ ] Model/agent overrides work
-- [ ] Single return works
-- [ ] Return chains work
+- [x] Plugin loads without errors
+- [x] `/subtask` command works
+- [x] Model/agent overrides work
+- [x] Single return works
+- [x] Return chains work
 
 ### Feature Complete (Phases 6-8)
 
-- [ ] `{as:name}` capture works
-- [ ] `$RESULT[name]` resolution works
-- [ ] `$TURN[n]` injection works
-- [ ] Non-subtask returns work
+- [x] `{as:name}` capture works
+- [x] `$RESULT[name]` resolution works
+- [x] `$TURN[n]` injection works
+- [x] Non-subtask returns work
 
 ### Production Ready (Phase 9)
 
