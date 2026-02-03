@@ -5,7 +5,7 @@ import YAML from "yaml";
  */
 
 export function parseFrontmatter(content: string): Record<string, unknown> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.replace(/^\uFEFF/, '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
   try {
     return YAML.parse(match[1]) ?? {};
@@ -15,6 +15,6 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
 }
 
 export function getTemplateBody(content: string): string {
-  const match = content.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+  const match = content.replace(/^\uFEFF/, '').match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
   return match ? match[1].trim() : content.trim();
 }
