@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { getPluginConfig } from "../core/state";
 
 const LOG_DIR = path.join(process.cwd(), ".logs");
 const LOG_FILE = path.join(LOG_DIR, "subtask2.log");
@@ -13,6 +14,8 @@ function ensureInitialized(): boolean {
   if (initialized) return true;
 
   try {
+    const config = getPluginConfig();
+	  if (!config || config.logging === false) return false;
     if (!fs.existsSync(LOG_DIR)) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
     }

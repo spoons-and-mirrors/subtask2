@@ -56,6 +56,7 @@ function isValidConfig(obj: unknown): obj is Subtask2Config {
     typeof cfg.generic_return !== "string"
   )
     return false;
+  if (typeof cfg.logging !== "boolean") return false;
   return true;
 }
 
