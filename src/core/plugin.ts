@@ -14,12 +14,13 @@ import { handleSessionIdle } from "../hooks/session-idle-hook";
  */
 
 export const createPlugin: Plugin = async ctx => {
-  clearLog();
   const configs = await buildManifest();
   const pluginConfig = await loadConfig();
 
   setConfigs(configs);
   setPluginConfig(pluginConfig);
+
+  clearLog();
 
   // Use the v1 client from OpenCode - it has internal fetch configured properly
   // The internal HTTP client (client.client) can be used for undocumented endpoints

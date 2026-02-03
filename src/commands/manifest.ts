@@ -13,10 +13,10 @@ import {
 
 export async function buildManifest(): Promise<Record<string, CommandConfig>> {
   const manifest: Record<string, CommandConfig> = {};
-  const home = Bun.env.HOME ?? "";
+  const home = Bun.env.HOME ?? Bun.env.USERPROFILE ?? "";
   const dirs = [
-    `${home}/.config/opencode/command`,
-    `${Bun.env.PWD ?? "."}/.opencode/command`,
+    `${home}/.config/opencode/commands`,
+    `${Bun.env.PWD ?? "."}/.opencode/commands`,
   ];
 
   for (const dir of dirs) {

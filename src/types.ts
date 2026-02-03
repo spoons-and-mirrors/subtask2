@@ -28,6 +28,7 @@ export interface CommandConfig {
 export interface Subtask2Config {
   replace_generic: boolean;
   generic_return?: string;
+  logging?: boolean;
 }
 
 export interface SubtaskPart {
