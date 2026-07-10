@@ -182,7 +182,8 @@ export async function handleSessionIdle(sessionID: string) {
   }
 
   // 3. Check for loop evaluation response
-  const evalState = getPendingEvaluation(sessionID);
+  // Use targetSessionID (resolved parent) since eval state is stored under the parent session
+  const evalState = getPendingEvaluation(targetSessionID);
   if (evalState) {
     let decision: "break" | "continue" = "continue";
 
