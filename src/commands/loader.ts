@@ -9,8 +9,8 @@ export async function loadCommandFile(
 ): Promise<{ content: string; path: string } | null> {
   const home = Bun.env.HOME ?? "";
   const dirs = [
-    `${home}/.config/opencode/command`,
-    `${Bun.env.PWD ?? "."}/.opencode/command`,
+    `${home}/.config/opencode/commands`,
+    `${Bun.env.PWD ?? "."}/.opencode/commands`,
   ];
 
   for (const dir of dirs) {

@@ -14,7 +14,6 @@ import {
   registerPendingResultCaptureByPrompt,
   registerPendingMainSessionCapture,
   setLastReturnType,
-  setPendingPromptReturn,
 } from "../core/state";
 import { getConfig } from "../commands/resolver";
 import { log } from "../utils/logger";
@@ -261,10 +260,9 @@ export async function executeReturn(
     // Track that we just executed a prompt
     setLastReturnType(sessionID, "prompt");
 
-    // Set pending for message-hooks injection (handles current LLM call)
-    setPendingPromptReturn(sessionID, item);
-
-    // Also persist via promptAsync (for history)
+    // promptAsync already persists the message as a real user message.
+    // No need to call setPendingPromptReturn — that would cause
+    // message-hooks to inject a duplicate copy.
     await client.session.promptAsync({
       path: { id: sessionID },
       body: { parts: [{ type: "text", text: item }] },

@@ -17,7 +17,7 @@ import {
   hasPendingStackedPromptResponse,
   clearPendingStackedPromptResponse,
   setPendingStackedPromptResponse,
-  setPendingPromptReturn,
+
   setSubtaskParentSession,
   getSubtaskParentSession,
   consumePendingParentForPrompt,
@@ -182,7 +182,8 @@ export async function handleSessionIdle(sessionID: string) {
   }
 
   // 3. Check for loop evaluation response
-  const evalState = getPendingEvaluation(sessionID);
+  // Use targetSessionID (resolved parent) since eval state is stored under the parent session
+  const evalState = getPendingEvaluation(targetSessionID);
   if (evalState) {
     let decision: "break" | "continue" = "continue";
 
@@ -200,11 +201,11 @@ export async function handleSessionIdle(sessionID: string) {
       log(`loop: unconditional loop, auto-continuing`);
     }
 
-    clearPendingEvaluation(sessionID);
+    clearPendingEvaluation(targetSessionID);
 
     if (decision === "continue") {
-      incrementLoopIteration(sessionID);
-      const state = getLoopState(sessionID);
+      incrementLoopIteration(targetSessionID);
+      const state = getLoopState(targetSessionID);
       if (state) {
         log(
           `loop: continuing iteration ${state.iteration}/${state.config.max}`
@@ -219,7 +220,7 @@ export async function handleSessionIdle(sessionID: string) {
 
           try {
             await client.session.promptAsync({
-              path: { id: sessionID },
+              path: { id: targetSessionID },
               body: {
                 parts: [
                   {
@@ -239,16 +240,16 @@ export async function handleSessionIdle(sessionID: string) {
           const cmdWithArgs = `/${state.commandName}${
             state.arguments ? " " + state.arguments : ""
           }`;
-          executeReturn(cmdWithArgs, sessionID).catch(console.error);
+          executeReturn(cmdWithArgs, targetSessionID).catch(console.error);
         }
         return;
       }
     } else {
       if (evalState.deferredReturns?.length) {
-        pushReturnStack(sessionID, [...evalState.deferredReturns]);
+        pushReturnStack(targetSessionID, [...evalState.deferredReturns]);
       }
       log(`loop: breaking loop, condition satisfied`);
-      clearLoop(sessionID);
+      clearLoop(targetSessionID);
     }
   }
 
@@ -318,14 +319,13 @@ export async function handleSessionIdle(sessionID: string) {
       executeReturn(next, targetSessionID).catch(console.error);
     } else {
       log(
-        `session.idle: setting pending prompt return: "${next.substring(0, 40)}..."`
+        `session.idle: executing prompt return: "${next.substring(0, 40)}..."`
       );
-      // Set pending prompt for message-hooks to inject into current LLM call
-      setPendingPromptReturn(targetSessionID, next);
       setLastReturnType(targetSessionID, "prompt");
 
-      // Also persist the message via promptAsync so it appears in history
-      // This is needed because injection into output.messages doesn't persist
+      // promptAsync persists the message as a real user message in history.
+      // No setPendingPromptReturn needed — that would cause message-hooks
+      // to inject a duplicate copy of the same prompt.
       client.session
         .promptAsync({
           path: { id: targetSessionID },

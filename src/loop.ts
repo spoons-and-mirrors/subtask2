@@ -28,7 +28,7 @@ export {
  * If no break signal found, loop continues by default (until max iterations)
  */
 export function parseLoopDecision(output: string): "break" | "continue" {
-  const match = output.match(/<subtask2\s+loop=["']?break["']?\s*\/?>/i);
+  const match = output.match(/<subtask2\s+loop\s*=\s*["']?break["']?\s*\/?>/i);
   return match ? "break" : "continue";
 }
 

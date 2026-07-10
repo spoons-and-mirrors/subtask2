@@ -23,6 +23,7 @@ import {
   getPendingResultCapture,
   captureSubtaskResult,
   setDeferredReturnPrompt,
+  deleteExecutedReturn,
 } from "../core/state";
 import { getConfig } from "../commands/resolver";
 import { log } from "../utils/logger";
@@ -282,6 +283,13 @@ export async function toolExecuteAfter(input: any, output: any) {
     } else {
       // Store state for evaluation - main LLM will decide if we continue
       setPendingEvaluation(loopSession, { ...retryLoop });
+
+      // Clear the executeReturn dedup key so the next loop continuation
+      // is not silently blocked by hasExecutedReturn check
+      const cmdItem = `/${retryLoop.commandName}${retryLoop.arguments ? " " + retryLoop.arguments : ""}`;
+      const dedupKey = `${loopSession}:${cmdItem}`;
+      deleteExecutedReturn(dedupKey);
+
       log(
         `retry: pending evaluation for condition "${retryLoop.config.until}"`
       );
