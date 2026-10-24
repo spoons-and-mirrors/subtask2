@@ -1,5 +1,5 @@
 import {
-  getClient,
+  getPluginContext,
   getReturnState,
   deleteReturnState,
   getPendingNonSubtaskReturns,
@@ -8,7 +8,6 @@ import {
   shiftReturnStack,
   resolveResultReferences,
   consumePendingMainSessionCapture,
-  captureSubtaskResult,
   storeSubtaskResult,
   consumeDeferredReturnPrompt,
   pushReturnStack,
@@ -42,8 +41,8 @@ import {
  * This is the authoritative signal to advance return chains and loop iterations.
  */
 export async function handleSessionIdle(sessionID: string) {
-  const client = getClient();
-  if (!client) return;
+  const ctx = getPluginContext();
+  if (!ctx) return;
 
   log(`session.idle: sessionID=${sessionID}`);
 
@@ -54,23 +53,20 @@ export async function handleSessionIdle(sessionID: string) {
   // If not already mapped, try to map it by looking at the first user message
   if (!parentSessionID) {
     try {
-      const messages = await client.session.messages({
-        path: { id: sessionID },
+      const messages = await ctx.session.context({
+        sessionID: sessionID as any,
       });
-      const firstUserMsg = messages.data?.find(
-        (m: any) => (m.info?.role ?? m.role) === "user"
+      const firstUserMsg = messages?.find(
+        (m: any) => m.type === "user" || m.role === "user"
       );
       if (firstUserMsg) {
-        for (const part of firstUserMsg.parts ?? []) {
-          const promptContent =
-            part.type === "subtask"
-              ? part.prompt?.trim()
-              : part.type === "text"
-                ? part.text?.trim()
-                : null;
+        const promptContent =
+          (firstUserMsg as any).text?.trim() ||
+          (firstUserMsg as any).content?.find((p: any) => p.type === "text")?.text?.trim() ||
+          (firstUserMsg as any).parts?.find((p: any) => p.type === "text")?.text?.trim() ||
+          null;
 
-          if (!promptContent) continue;
-
+        if (promptContent) {
           const mappedParent = consumePendingParentForPrompt(promptContent);
           if (mappedParent && mappedParent !== sessionID) {
             setSubtaskParentSession(sessionID, mappedParent);
@@ -96,12 +92,12 @@ export async function handleSessionIdle(sessionID: string) {
 
             // Capture the result
             const resultText = (() => {
-              const list = messages.data ?? [];
+              const list = messages ?? [];
               const reversed = [...list].reverse();
               for (const msg of reversed) {
-                const role = msg.info?.role ?? msg.role;
+                const role = (msg as any).type ?? (msg as any).info?.role ?? (msg as any).role;
                 if (role !== "assistant") continue;
-                const parts = msg.parts ?? [];
+                const parts = (msg as any).content ?? (msg as any).parts ?? [];
                 const reversedParts = [...parts].reverse();
                 for (const p of reversedParts) {
                   if (p.ignored) continue;
@@ -142,14 +138,14 @@ export async function handleSessionIdle(sessionID: string) {
   const pendingCaptureName = consumePendingMainSessionCapture(sessionID);
   if (pendingCaptureName) {
     try {
-      const messages = await client.session.messages({
-        path: { id: sessionID },
+      const messages = await ctx.session.context({
+        sessionID: sessionID as any,
       });
       const resultText = (() => {
-        const list = messages.data ?? [];
+        const list = messages ?? [];
         const reversed = [...list].reverse();
         for (const msg of reversed) {
-          const parts = msg.parts ?? [];
+          const parts = (msg as any).content ?? (msg as any).parts ?? [];
           const reversedParts = [...parts].reverse();
           for (const part of reversedParts) {
             if (part.ignored) continue;
@@ -158,12 +154,15 @@ export async function handleSessionIdle(sessionID: string) {
               if (text) return text;
             }
             if (part.type === "tool" && part.state?.status === "completed") {
-              const output = part.state.output;
-              if (typeof output !== "string") continue;
-              const cleaned = output
+              const contentArr = (part.state as any).content || [];
+              let output = "";
+              for (const c of contentArr) {
+                if (c.type === "text" && c.text) output += c.text + "\n";
+              }
+              output = output
                 .replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, "")
                 .trim();
-              if (cleaned) return cleaned;
+              if (output) return output;
             }
           }
         }
@@ -187,12 +186,13 @@ export async function handleSessionIdle(sessionID: string) {
     let decision: "break" | "continue" = "continue";
 
     if (evalState.config.until) {
-      const messages = await client.session.messages({
-        path: { id: sessionID },
+      const messages = await ctx.session.context({
+        sessionID: sessionID as any,
       });
-      const lastMsg = messages.data?.[messages.data.length - 1];
+      const lastMsg = messages?.[messages.length - 1];
+      const parts = (lastMsg as any)?.content ?? (lastMsg as any)?.parts ?? [];
       const lastText =
-        lastMsg?.parts?.find((p: any) => p.type === "text")?.text || "";
+        parts.find((p: any) => p.type === "text")?.text || "";
 
       decision = parseLoopDecision(lastText);
       log(`loop: evaluation response decision=${decision}`);
@@ -211,26 +211,22 @@ export async function handleSessionIdle(sessionID: string) {
         );
 
         if (state.commandName === "_inline_subtask_") {
-          let model: { providerID: string; modelID: string } | undefined;
+          let model: { id: string; providerID: string } | undefined;
           if (state.model?.includes("/")) {
             const [providerID, ...rest] = state.model.split("/");
-            model = { providerID, modelID: rest.join("/") };
+            model = { providerID, id: rest.join("/") };
           }
 
           try {
-            await client.session.promptAsync({
-              path: { id: sessionID },
-              body: {
-                parts: [
-                  {
-                    type: "subtask",
-                    agent: state.agent || "build",
-                    model,
-                    description: "Inline subtask (loop iteration)",
-                    prompt: state.arguments || "",
-                  },
-                ],
-              },
+            const child = await ctx.session.create({
+              parentID: sessionID as any,
+              title: "Inline subtask (loop iteration)",
+              agent: (state.agent as any) || "build",
+              model: model as any,
+            });
+            await ctx.session.prompt({
+              sessionID: child.id,
+              text: state.arguments || "",
             });
           } catch (e) {
             log(`loop: inline subtask failed:`, e);
@@ -282,12 +278,12 @@ export async function handleSessionIdle(sessionID: string) {
     setLastReturnType(targetSessionID, "prompt");
     setPendingStackedPromptResponse(targetSessionID);
     try {
-      await client.session.promptAsync({
-        path: { id: targetSessionID },
-        body: { parts: [{ type: "text", text: resolved }] },
+      await ctx.session.prompt({
+        sessionID: targetSessionID as any,
+        text: resolved,
       });
     } catch (e) {
-      log(`session.idle: pendingReturn promptAsync failed: ${e}`);
+      log(`session.idle: pendingReturn prompt failed: ${e}`);
       clearPendingStackedPromptResponse(targetSessionID);
     }
     return;
@@ -320,18 +316,15 @@ export async function handleSessionIdle(sessionID: string) {
       log(
         `session.idle: setting pending prompt return: "${next.substring(0, 40)}..."`
       );
-      // Set pending prompt for message-hooks to inject into current LLM call
       setPendingPromptReturn(targetSessionID, next);
       setLastReturnType(targetSessionID, "prompt");
 
-      // Also persist the message via promptAsync so it appears in history
-      // This is needed because injection into output.messages doesn't persist
-      client.session
-        .promptAsync({
-          path: { id: targetSessionID },
-          body: { parts: [{ type: "text", text: next }] },
+      ctx.session
+        .prompt({
+          sessionID: targetSessionID as any,
+          text: next,
         })
-        .catch((e: any) => log(`session.idle: promptAsync failed: ${e}`));
+        .catch((e: any) => log(`session.idle: prompt failed: ${e}`));
     }
     return;
   }
@@ -356,3 +349,4 @@ export async function handleSessionIdle(sessionID: string) {
     log(`session.idle: cleared pending prompt flag`);
   }
 }
+

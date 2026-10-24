@@ -8,6 +8,7 @@
  * - Steer agentic flow from start to finish
  */
 
-import { createPlugin } from "./src/core/plugin";
+import { plugin } from "./src/core/plugin";
 
-export default createPlugin;
+export default plugin;
+

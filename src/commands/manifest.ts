@@ -1,5 +1,7 @@
-/// <reference types="bun-types" />
-
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import type { CommandConfig } from "../types";
 import {
   parseFrontmatter,
@@ -11,22 +13,45 @@ import {
  * Commands: Manifest building
  */
 
+async function scanMarkdownFiles(dir: string, baseDir: string = dir): Promise<Array<{ relativePath: string; fullPath: string }>> {
+  const results: Array<{ relativePath: string; fullPath: string }> = [];
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const nested = await scanMarkdownFiles(fullPath, baseDir);
+        results.push(...nested);
+      } else if (entry.isFile() && entry.name.endsWith(".md")) {
+        const rel = relative(baseDir, fullPath);
+        results.push({ relativePath: rel, fullPath });
+      }
+    }
+  } catch {}
+  return results;
+}
+
 export async function buildManifest(): Promise<Record<string, CommandConfig>> {
   const manifest: Record<string, CommandConfig> = {};
-  const home = Bun.env.HOME ?? "";
+  const home = homedir();
+  const cwd = process.cwd();
   const dirs = [
-    `${home}/.config/opencode/command`,
-    `${Bun.env.PWD ?? "."}/.opencode/command`,
+    join(home, ".config/opencode/command"),
+    join(home, ".config/opencode/commands"),
+    join(cwd, ".opencode/command"),
+    join(cwd, ".opencode/commands"),
   ];
 
   for (const dir of dirs) {
-    try {
-      const glob = new Bun.Glob("**/*.md");
-      for await (const file of glob.scan(dir)) {
-        const name = file.replace(/\.md$/, "").split("/").pop()!;
-        const pathKey = file.replace(/\.md$/, "");
+    if (!existsSync(dir)) continue;
 
-        const content = await Bun.file(`${dir}/${file}`).text();
+    try {
+      const files = await scanMarkdownFiles(dir);
+      for (const { relativePath, fullPath } of files) {
+        const pathKey = relativePath.replace(/\.md$/, "");
+        const name = pathKey.split("/").pop()!;
+
+        const content = await readFile(fullPath, "utf-8");
         const fm = parseFrontmatter(content);
         const returnVal = fm.return;
         const returnArr = returnVal
@@ -61,3 +86,4 @@ export async function buildManifest(): Promise<Record<string, CommandConfig>> {
   }
   return manifest;
 }
+

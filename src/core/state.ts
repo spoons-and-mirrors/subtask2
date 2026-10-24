@@ -1,19 +1,23 @@
 import type { CommandConfig, Subtask2Config } from "../types";
 import type { LoopState } from "../loop";
+import type { Plugin } from "@opencode/plugin";
+
+export type PluginContext = Parameters<NonNullable<Parameters<typeof Plugin.define>[0]["setup"]>>[0];
 
 /**
  * Centralized session state management for subtask2 plugin
  * All plugin state is managed through this module
  */
 
+// Plugin Context (V2)
+let pluginContext: PluginContext | null = null;
+
+
 // Command configurations loaded from manifest
 let configs: Record<string, CommandConfig> = {};
 
 // Plugin user configuration
 let pluginConfig: Subtask2Config = { replace_generic: true };
-
-// OpenCode client instance (v1 SDK with internal HTTP client)
-let client: any = null;
 
 // Session state maps
 const callState = new Map<string, string>();
@@ -92,16 +96,21 @@ export function setPluginConfig(newConfig: Subtask2Config): void {
 }
 
 // ============================================================================
-// Client
+// Context / Client
 // ============================================================================
 
-export function getClient(): any {
-  return client;
+export function getPluginContext(): PluginContext | null {
+  return pluginContext;
 }
 
-export function setClient(newClient: any): void {
-  client = newClient;
+export function setPluginContext(ctx: PluginContext): void {
+  pluginContext = ctx;
 }
+
+export function getClient(): PluginContext["session"] | null {
+  return pluginContext?.session ?? null;
+}
+
 
 // ============================================================================
 // Call State
@@ -720,6 +729,19 @@ export function storeSubtaskResult(
   }
   subtaskResults.get(sessionID)!.set(name, result);
 }
+
+/**
+ * Set a pending/captured result by name.
+ */
+export function setPendingResult(
+  name: string,
+  result: string,
+  sessionID?: string
+): void {
+  const sid = sessionID ?? "default";
+  storeSubtaskResult(sid, name, result);
+}
+
 
 /**
  * Get a named result for a session.

@@ -1,6 +1,6 @@
 import type { LoopConfig } from "../types";
 import {
-  getClient,
+  getPluginContext,
   getConfigs,
   hasExecutedReturn,
   addExecutedReturn,
@@ -36,17 +36,25 @@ export async function executeReturn(
   sessionID: string,
   loopOverride?: LoopConfig
 ) {
+  const ctx = getPluginContext();
+  if (!ctx) {
+    log(`executeReturn: no plugin context available`);
+    return;
+  }
+
   // SPECIAL: Auto workflow parse marker - parse and execute the generated workflow
   if (item === "__subtask2_auto_parse__") {
-    const client = getClient();
-
-    // Get the last assistant message (the auto workflow output)
-    const messages = await client.session.messages({
-      path: { id: sessionID },
+    const messages = await ctx.session.context({
+      sessionID: sessionID as any,
     });
-    const lastMsg = messages.data?.[messages.data.length - 1];
-    const lastText =
-      lastMsg?.parts?.find((p: any) => p.type === "text")?.text || "";
+    const lastMsg = messages?.[messages.length - 1];
+    let lastText = "";
+    if (lastMsg?.type === "assistant") {
+      const textItem = lastMsg.content?.find((c: any) => c.type === "text");
+      if (textItem && textItem.type === "text") {
+        lastText = textItem.text;
+      }
+    }
 
     // Parse the auto workflow output
     const result = parseAutoWorkflowOutput(lastText);
@@ -62,8 +70,6 @@ export async function executeReturn(
       `executeReturn: parsed auto workflow: "${result.command.substring(0, 80)}..."`
     );
 
-    // Execute the parsed command as if user invoked it
-    // This recurses into executeReturn with the actual /subtask {...} command
     await executeReturn(result.command, sessionID);
     return;
   }
@@ -73,30 +79,22 @@ export async function executeReturn(
   if (hasExecutedReturn(key)) return;
   addExecutedReturn(key);
 
-  const client = getClient();
-
   if (item.startsWith("/")) {
-    // Parse command with potential overrides: /cmd {model:provider/id,loop:5,until:DONE} args
-    // Also handles inline subtask syntax: /subtask {loop:5,until:condition} prompt text
     const parsed = parseCommandWithOverrides(item);
 
     if (parsed.isInlineSubtask) {
-      // Inline subtask: /subtask {overrides} prompt - execute as subtask without command file
       let prompt = parsed.arguments || "";
 
-      // Resolve $TURN references in the prompt
       if (hasTurnReferences(prompt)) {
         prompt = await resolveTurnReferences(prompt, sessionID);
       }
 
-      // Build model from override if present
-      let model: { providerID: string; modelID: string } | undefined;
+      let model: { id: string; providerID: string } | undefined;
       if (parsed.overrides.model?.includes("/")) {
         const [providerID, ...rest] = parsed.overrides.model.split("/");
-        model = { providerID, modelID: rest.join("/") };
+        model = { providerID, id: rest.join("/") };
       }
 
-      // Start loop if configured
       const loopConfig = parsed.overrides.loop || loopOverride;
       if (loopConfig) {
         startLoop(
@@ -113,7 +111,6 @@ export async function executeReturn(
         );
       }
 
-      // Handle inline subtask returns - push onto stack (if not also looping)
       if (parsed.overrides.loop && parsed.overrides.return?.length) {
         log(
           `executeReturn: inline subtask has loop + return, deferring ${parsed.overrides.return.length} returns until loop completes`
@@ -122,7 +119,6 @@ export async function executeReturn(
         parsed.overrides.return &&
         parsed.overrides.return.length > 0
       ) {
-        // No loop, safe to push returns onto stack
         pushReturnStack(sessionID, [...parsed.overrides.return]);
         log(
           `executeReturn: pushed ${parsed.overrides.return.length} inline returns onto stack`
@@ -135,10 +131,8 @@ export async function executeReturn(
           50
         )}..." (agent=${parsed.overrides.agent || "build"})`
       );
-      // Register parent session for $TURN resolution (race-safe: keyed by prompt)
       registerPendingParentForPrompt(prompt, sessionID);
 
-      // Register result capture if `as:` is specified
       if (parsed.overrides.as) {
         registerPendingResultCaptureByPrompt(
           prompt,
@@ -150,30 +144,23 @@ export async function executeReturn(
         );
       }
 
-      // Track that we just executed an inline subtask
       setLastReturnType(sessionID, "inline_subtask");
 
       try {
-        log(`executeReturn: calling promptAsync for inline subtask...`);
-        // Use promptAsync with subtask part to run as subtask
-        // Use start of prompt as description for better UX
-        const description =
-          prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
-        const result = await client.session.promptAsync({
-          path: { id: sessionID },
-          body: {
-            parts: [
-              {
-                type: "subtask",
-                agent: parsed.overrides.agent || "build",
-                model,
-                description,
-                prompt,
-              },
-            ],
-          },
+        log(`executeReturn: creating child session for inline subtask...`);
+        const title = prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
+        const child = await ctx.session.create({
+          parentID: sessionID as any,
+          title,
+          agent: (parsed.overrides.agent as any) || "build",
+          model: model as any,
         });
-        log(`executeReturn: promptAsync returned: ${JSON.stringify(result)}`);
+
+        await ctx.session.prompt({
+          sessionID: child.id,
+          text: prompt,
+        });
+        log(`executeReturn: inline subtask started in child session ${child.id}`);
       } catch (e) {
         log(`executeReturn inline subtask FAILED:`, e);
       }
@@ -183,14 +170,12 @@ export async function executeReturn(
     // Regular command execution
     let args = parsed.arguments || "";
 
-    // Find the path key for this command (OpenCode needs full path for subfolder commands)
     const configs = getConfigs();
     const allKeys = Object.keys(configs);
     const pathKey =
       allKeys.find(k => k.includes("/") && k.endsWith("/" + parsed.command)) ||
       parsed.command;
 
-    // Store model override if present (will be consumed by command.execute.before)
     if (parsed.overrides.model) {
       setPendingModelOverride(sessionID, parsed.overrides.model);
       log(
@@ -205,8 +190,6 @@ export async function executeReturn(
       );
     }
 
-    // Register result capture for non-subtask commands with `as:`
-    // The next LLM turn after the command completes will be captured
     if (parsed.overrides.as) {
       registerPendingMainSessionCapture(sessionID, parsed.overrides.as);
       log(
@@ -214,7 +197,6 @@ export async function executeReturn(
       );
     }
 
-    // Store loop config if present (inline takes precedence over passed-in)
     const loopConfig = parsed.overrides.loop || loopOverride;
     if (loopConfig) {
       startLoop(
@@ -230,7 +212,6 @@ export async function executeReturn(
       );
     }
 
-    // Check if we have piped args for this return command
     const returnArgs = getReturnArgsState(sessionID);
     if (returnArgs?.length) {
       const pipeArg = returnArgs.shift();
@@ -242,15 +223,14 @@ export async function executeReturn(
       `executeReturn: /${parsed.command} -> ${pathKey} args="${args}" (parent=${sessionID})`
     );
     setSessionMainCommand(sessionID, pathKey);
-    // Note: parent session registration happens in command-hooks.ts after prompt modifications
 
-    // Track that we just executed a regular command
     setLastReturnType(sessionID, "command");
 
     try {
-      await client.session.command({
-        path: { id: sessionID },
-        body: { command: pathKey, arguments: args || "" },
+      await ctx.session.command({
+        sessionID: sessionID as any,
+        name: pathKey,
+        text: args || "",
       });
     } catch (e) {
       log(`executeReturn FAILED: ${pathKey}`, e);
@@ -258,16 +238,17 @@ export async function executeReturn(
   } else {
     log(`executeReturn: prompt "${item.substring(0, 40)}..."`);
 
-    // Track that we just executed a prompt
     setLastReturnType(sessionID, "prompt");
-
-    // Set pending for message-hooks injection (handles current LLM call)
     setPendingPromptReturn(sessionID, item);
 
-    // Also persist via promptAsync (for history)
-    await client.session.promptAsync({
-      path: { id: sessionID },
-      body: { parts: [{ type: "text", text: item }] },
-    });
+    try {
+      await ctx.session.prompt({
+        sessionID: sessionID as any,
+        text: item,
+      });
+    } catch (e) {
+      log(`executeReturn prompt FAILED:`, e);
+    }
   }
 }
+

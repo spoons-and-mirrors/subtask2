@@ -1,5 +1,5 @@
 import {
-  getClient,
+  getPluginContext,
   registerPendingParentForPrompt,
   setReturnState,
 } from "../core/state";
@@ -19,7 +19,11 @@ export async function executeAutoWorkflow(
   agent?: string,
   model?: { providerID: string; modelID: string }
 ): Promise<void> {
-  const client = getClient();
+  const ctx = getPluginContext();
+  if (!ctx) {
+    log(`executeAutoWorkflow ERROR: no plugin context available`);
+    return;
+  }
 
   // Build the prompt with README content injected
   const autoPrompt = await getAutoWorkflowPrompt();
@@ -37,21 +41,22 @@ export async function executeAutoWorkflow(
   setReturnState(sessionID, ["__subtask2_auto_parse__"]);
 
   try {
-    await client.session.promptAsync({
-      path: { id: sessionID },
-      body: {
-        parts: [
-          {
-            type: "subtask",
-            agent: agent || "build",
-            model,
-            description: "Auto workflow generation",
-            prompt,
-          },
-        ],
-      },
+    let m: { id: string; providerID: string } | undefined;
+    if (model) {
+      m = { providerID: model.providerID, id: model.modelID };
+    }
+    const child = await ctx.session.create({
+      parentID: sessionID as any,
+      title: "Auto workflow generation",
+      agent: (agent as any) || "build",
+      model: m as any,
+    });
+    await ctx.session.prompt({
+      sessionID: child.id,
+      text: prompt,
     });
   } catch (e) {
     log(`executeAutoWorkflow FAILED:`, e);
   }
 }
+
