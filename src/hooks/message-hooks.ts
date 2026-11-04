@@ -1,7 +1,7 @@
 import {
   getReturnState,
   getPluginConfig,
-  getAllPendingReturns,
+  getPendingReturn,
   deletePendingReturn,
   hasReturnStack,
   peekReturnStack,
@@ -25,7 +25,7 @@ import { parseInlineSubtask } from "../parsing";
 import { executeInlineSubtask } from "../features/inline-subtasks";
 import { executeReturn } from "../features/returns";
 import {
-  getAllPendingEvaluations,
+  getPendingEvaluation,
   createEvaluationPrompt,
   createYieldPrompt,
 } from "../loop";
@@ -36,7 +36,7 @@ import type { SessionContextEvent } from "../types";
  */
 function replaceAndClear(
   part: any,
-  msg: any,
+  _msg: any,
   msgIndex: number,
   newText: string,
   messages: any[]
@@ -225,8 +225,9 @@ export async function onSessionContext(event: SessionContextEvent): Promise<void
       }
     }
 
-    // Check for pending loop evaluation
-    for (const [sessionID, retryState] of getAllPendingEvaluations()) {
+    // Check for pending loop evaluation (filter ONLY for target parent session)
+    const retryState = parentSessionID ? getPendingEvaluation(parentSessionID) : undefined;
+    if (retryState) {
       if (!retryState.config.until) {
         const yieldPrompt = createYieldPrompt(
           retryState.iteration,
@@ -250,31 +251,31 @@ export async function onSessionContext(event: SessionContextEvent): Promise<void
       return;
     }
 
-    // Check for pending return
-    const pendingReturnsEntries = [...getAllPendingReturns()];
-    for (const [sessionID, returnPrompt] of pendingReturnsEntries) {
-      deletePendingReturn(sessionID);
+    // Check for pending return (filter ONLY for target parent session)
+    const pendingReturnPrompt = parentSessionID ? getPendingReturn(parentSessionID) : undefined;
+    if (pendingReturnPrompt && parentSessionID) {
+      deletePendingReturn(parentSessionID);
       setHasActiveSubtask(false);
 
-      const returnStateData = getReturnState(sessionID);
-      if (returnStateData?.length && returnStateData[0] === returnPrompt) {
+      const returnStateData = getReturnState(parentSessionID);
+      if (returnStateData?.length && returnStateData[0] === pendingReturnPrompt) {
         returnStateData.shift();
       }
 
-      if (returnPrompt.startsWith("/")) {
+      if (pendingReturnPrompt.startsWith("/")) {
         if (lastGenericMsgIndex >= 0) {
           messages.splice(lastGenericMsgIndex, 1);
           log(
             `Removed summarize message at index ${lastGenericMsgIndex} for command return`
           );
         }
-        executeReturn(returnPrompt, sessionID).catch(console.error);
+        executeReturn(pendingReturnPrompt, parentSessionID).catch(console.error);
       } else {
         replaceAndClear(
           lastGenericPart,
           lastGenericMsg,
           lastGenericMsgIndex,
-          returnPrompt,
+          pendingReturnPrompt,
           messages
         );
       }
@@ -371,5 +372,41 @@ export async function onSessionContext(event: SessionContextEvent): Promise<void
 }
 
 // Backward compatibility alias
-export const chatMessagesTransform = onSessionContext;
+/**
+ * V1 adapter: experimental.chat.messages.transform(input: {}, output: { messages: any[] })
+ * V2 adapter: session.hook("context", event)
+ */
+export const chatMessagesTransform = async (
+  input: { sessionID?: string } | SessionContextEvent | Record<string, any>,
+  output?: { messages: any[]; system?: any[] }
+) => {
+  if (output && Array.isArray(output.messages)) {
+    if (output.messages.length === 0) {
+      return;
+    }
+
+    let derivedSessionID = (input as any)?.sessionID;
+    if (!derivedSessionID) {
+      for (let i = output.messages.length - 1; i >= 0; i--) {
+        const msg = output.messages[i];
+        const sID = msg?.info?.sessionID ?? msg?.sessionID;
+        if (sID) {
+          derivedSessionID = sID;
+          break;
+        }
+      }
+    }
+
+    if (!derivedSessionID) {
+      return;
+    }
+
+    return onSessionContext({
+      sessionID: derivedSessionID,
+      messages: output.messages,
+      system: output.system ?? [],
+    });
+  }
+  return onSessionContext(input as SessionContextEvent);
+};
 

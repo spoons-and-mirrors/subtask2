@@ -1,4 +1,4 @@
-import { getPluginContext, getFirstReturnPrompt } from "../core/state";
+import { getPluginContext, getClient, getFirstReturnPrompt, getSessionMessages } from "../core/state";
 import { log } from "../utils/logger";
 import {
   hasTurnReferences,
@@ -23,15 +23,14 @@ export async function fetchSessionMessages(
   specificIndices?: number[]
 ): Promise<string> {
   const ctx = getPluginContext();
-  if (!ctx) {
-    log("fetchSessionMessages: no plugin context available");
+  const client = getClient();
+  if (!ctx && !client) {
+    log("fetchSessionMessages: no plugin context or client available");
     return "[TURN: plugin context not available]";
   }
 
   try {
-    const messages = await ctx.session.context({
-      sessionID: sessionID as any,
-    });
+    const messages = await getSessionMessages(sessionID);
 
     log(
       `fetchSessionMessages: got ${
@@ -48,10 +47,12 @@ export async function fetchSessionMessages(
     while (effectiveMessages.length > 0) {
       const last = effectiveMessages[effectiveMessages.length - 1];
       let hasContent = false;
-      if (last.type === "user") {
-        hasContent = !!last.text?.trim();
-      } else if (last.type === "assistant") {
-        hasContent = (last.content || []).some(
+      const role = last.type ?? last.info?.role ?? last.role;
+      if (role === "user") {
+        hasContent = !!(last.text?.trim() || last.content?.some((c: any) => c.text?.trim()) || last.parts?.some((c: any) => c.text?.trim()));
+      } else if (role === "assistant") {
+        const parts = last.content || last.parts || [];
+        hasContent = parts.some(
           (c: any) =>
             (c.type === "text" && c.text?.trim()) ||
             (c.type === "tool" && c.state?.status === "completed")
@@ -77,15 +78,25 @@ export async function fetchSessionMessages(
     }
 
     const formatted = selectedMessages.map((msg: any) => {
-      const role = (msg.type || "unknown").toUpperCase();
+      const rawRole = msg.type ?? msg.info?.role ?? msg.role ?? "unknown";
+      const role = String(rawRole).toUpperCase();
       const parts: string[] = [];
 
-      if (msg.type === "user") {
+      if (rawRole === "user") {
         if (msg.text) {
           parts.push(msg.text);
+        } else if (Array.isArray(msg.content)) {
+          for (const item of msg.content) {
+            if (item.type === "text" && item.text) parts.push(item.text);
+          }
+        } else if (Array.isArray(msg.parts)) {
+          for (const item of msg.parts) {
+            if (item.type === "text" && item.text) parts.push(item.text);
+          }
         }
-      } else if (msg.type === "assistant") {
-        for (const item of msg.content || []) {
+      } else if (rawRole === "assistant") {
+        const contentList = msg.content || msg.parts || [];
+        for (const item of contentList) {
           if (item.type === "text" && item.text) {
             if (
               item.text.startsWith("Summarize the task tool output") ||

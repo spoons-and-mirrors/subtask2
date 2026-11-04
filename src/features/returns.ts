@@ -1,6 +1,7 @@
 import type { LoopConfig } from "../types";
 import {
   getPluginContext,
+  getClient,
   getConfigs,
   hasExecutedReturn,
   addExecutedReturn,
@@ -15,8 +16,12 @@ import {
   registerPendingMainSessionCapture,
   setLastReturnType,
   setPendingPromptReturn,
+  createChildSession,
+  runSessionCommand,
+  promptSession,
+  getSessionMessages,
+  setSubtaskParentSession,
 } from "../core/state";
-import { getConfig } from "../commands/resolver";
 import { log } from "../utils/logger";
 import {
   parseCommandWithOverrides,
@@ -37,21 +42,21 @@ export async function executeReturn(
   loopOverride?: LoopConfig
 ) {
   const ctx = getPluginContext();
-  if (!ctx) {
-    log(`executeReturn: no plugin context available`);
+  const client = getClient();
+  if (!ctx && !client) {
+    log(`executeReturn: no plugin context or client available`);
     return;
   }
 
   // SPECIAL: Auto workflow parse marker - parse and execute the generated workflow
   if (item === "__subtask2_auto_parse__") {
-    const messages = await ctx.session.context({
-      sessionID: sessionID as any,
-    });
+    const messages = await getSessionMessages(sessionID);
     const lastMsg = messages?.[messages.length - 1];
     let lastText = "";
-    if (lastMsg?.type === "assistant") {
-      const textItem = lastMsg.content?.find((c: any) => c.type === "text");
-      if (textItem && textItem.type === "text") {
+    if (lastMsg?.type === "assistant" || lastMsg?.role === "assistant" || lastMsg?.info?.role === "assistant") {
+      const parts = lastMsg.content || lastMsg.parts || [];
+      const textItem = parts.find((c: any) => c.type === "text");
+      if (textItem && textItem.text) {
         lastText = textItem.text;
       }
     }
@@ -149,17 +154,19 @@ export async function executeReturn(
       try {
         log(`executeReturn: creating child session for inline subtask...`);
         const title = prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
-        const child = await ctx.session.create({
-          parentID: sessionID as any,
+        const child = await createChildSession({
+          parentID: sessionID,
           title,
           agent: (parsed.overrides.agent as any) || "build",
           model: model as any,
         });
 
-        await ctx.session.prompt({
-          sessionID: child.id,
-          text: prompt,
-        });
+        if (loopConfig || parsed.overrides.return?.length) {
+          setSubtaskParentSession(child.id, sessionID);
+          log(`executeReturn: mapped child ${child.id} -> parent ${sessionID}`);
+        }
+
+        await promptSession(child.id, prompt);
         log(`executeReturn: inline subtask started in child session ${child.id}`);
       } catch (e) {
         log(`executeReturn inline subtask FAILED:`, e);
@@ -227,10 +234,10 @@ export async function executeReturn(
     setLastReturnType(sessionID, "command");
 
     try {
-      await ctx.session.command({
-        sessionID: sessionID as any,
-        name: pathKey,
-        text: args || "",
+      await runSessionCommand({
+        sessionID,
+        command: pathKey,
+        arguments: args || "",
       });
     } catch (e) {
       log(`executeReturn FAILED: ${pathKey}`, e);
@@ -242,10 +249,7 @@ export async function executeReturn(
     setPendingPromptReturn(sessionID, item);
 
     try {
-      await ctx.session.prompt({
-        sessionID: sessionID as any,
-        text: item,
-      });
+      await promptSession(sessionID, item);
     } catch (e) {
       log(`executeReturn prompt FAILED:`, e);
     }

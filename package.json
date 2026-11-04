@@ -31,7 +31,13 @@
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0 <3.0.0"
   },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
   "dependencies": {
+    "@opencode/plugin": ">=2.0.0 <3.0.0",
     "yaml": "^2.8.2"
   },
   "devDependencies": {

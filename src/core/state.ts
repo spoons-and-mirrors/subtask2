@@ -1,5 +1,4 @@
 import type { CommandConfig, Subtask2Config } from "../types";
-import type { LoopState } from "../loop";
 import type { Plugin } from "@opencode/plugin";
 
 export type PluginContext = Parameters<NonNullable<Parameters<typeof Plugin.define>[0]["setup"]>>[0];
@@ -11,7 +10,7 @@ export type PluginContext = Parameters<NonNullable<Parameters<typeof Plugin.defi
 
 // Plugin Context (V2)
 let pluginContext: PluginContext | null = null;
-
+let client: any = null;
 
 // Command configurations loaded from manifest
 let configs: Record<string, CommandConfig> = {};
@@ -54,6 +53,12 @@ const subtaskResults = new Map<string, Map<string, string>>();
 
 // Pending `as:` names for subtasks: subtaskSessionID -> {parentSessionID, name}
 const pendingResultCapture = new Map<
+  string,
+  { parentSessionID: string; name: string }
+>();
+
+// Pending `as:` names keyed by tool callID: callID -> {parentSessionID, name}
+const pendingResultCaptureByCallID = new Map<
   string,
   { parentSessionID: string; name: string }
 >();
@@ -107,8 +112,149 @@ export function setPluginContext(ctx: PluginContext): void {
   pluginContext = ctx;
 }
 
-export function getClient(): PluginContext["session"] | null {
+export function getClient(): any {
+  if (client) return client;
   return pluginContext?.session ?? null;
+}
+
+export function setClient(newClient: any): void {
+  client = newClient;
+}
+
+// ============================================================================
+// Session Helper (Uniform V1 & V2 helper functions)
+// ============================================================================
+
+/**
+ * Prompt a session uniformly across V1 and V2 environments
+ */
+export async function promptSession(
+  sessionID: string,
+  promptText: string,
+  options?: any
+): Promise<any> {
+  const ctx = getPluginContext();
+  if (ctx?.session?.prompt) {
+    return ctx.session.prompt({
+      sessionID: sessionID as any,
+      text: promptText,
+      ...(options || {}),
+    });
+  }
+
+  const c = getClient();
+  if (c?.session?.prompt) {
+    return c.session.prompt({
+      path: { id: sessionID },
+      body: {
+        parts: [{ type: "text", text: promptText }],
+        ...(options?.body || {}),
+      },
+      ...(options || {}),
+    });
+  }
+
+  throw new Error("No V2 context or V1 client available for promptSession");
+}
+
+/**
+ * Create a child session uniformly across V1 and V2 environments
+ */
+export async function createChildSession(options: {
+  parentID: string;
+  title: string;
+  agent?: string;
+  model?: any;
+}): Promise<{ id: string; [key: string]: any }> {
+  const ctx = getPluginContext();
+  if (ctx?.session?.create) {
+    const child = await ctx.session.create({
+      parentID: options.parentID as any,
+      title: options.title,
+      agent: options.agent as any,
+      model: options.model as any,
+    });
+    return child;
+  }
+
+  const c = getClient();
+  if (c?.session?.create) {
+    const body: Record<string, any> = {
+      parentID: options.parentID,
+      title: options.title,
+    };
+    if (options.agent) body.agent = options.agent;
+    if (options.model) body.model = options.model;
+
+    const res = await c.session.create({ body });
+    const childData = res?.data ?? res;
+    const childID = childData?.id ?? childData?.sessionID;
+    if (!childID) {
+      throw new Error("V1 session.create did not return a session id");
+    }
+    return { ...childData, id: childID, agent: options.agent, model: options.model };
+  }
+
+  throw new Error("No V2 context or V1 client available for createChildSession");
+}
+
+/**
+ * Run a command uniformly across V1 and V2 environments
+ */
+export async function runSessionCommand(options: {
+  sessionID: string;
+  command: string;
+  arguments?: string;
+}): Promise<any> {
+  const ctx = getPluginContext();
+  if (ctx?.session?.command) {
+    return ctx.session.command({
+      sessionID: options.sessionID as any,
+      name: options.command,
+      text: options.arguments || "",
+    });
+  }
+
+  const c = getClient();
+  if (c?.session?.command) {
+    return c.session.command({
+      path: { id: options.sessionID },
+      body: {
+        command: options.command,
+        arguments: options.arguments || "",
+      },
+    });
+  }
+
+  return promptSession(
+    options.sessionID,
+    `/${options.command} ${options.arguments || ""}`.trim()
+  );
+}
+
+/**
+ * Get messages from a session uniformly across V1 and V2 environments
+ */
+export async function getSessionMessages(sessionID: string): Promise<any[]> {
+  const ctx = getPluginContext();
+  if (ctx?.session?.context) {
+    const res = await ctx.session.context({
+      sessionID: sessionID as any,
+    });
+    return Array.isArray(res) ? res : [];
+  }
+
+  const c = getClient();
+  if (c?.session?.messages) {
+    const res = await c.session.messages({
+      path: { id: sessionID },
+      sessionID,
+    });
+    const msgList = res?.data ?? res;
+    return Array.isArray(msgList) ? msgList : [];
+  }
+
+  return [];
 }
 
 
@@ -630,6 +776,39 @@ export function consumePendingMainSessionCapture(
 }
 
 /**
+ * Register a pending result capture by tool callID.
+ */
+export function registerPendingResultCaptureByCallID(
+  callID: string,
+  parentSessionID: string,
+  asName: string
+): void {
+  pendingResultCaptureByCallID.set(callID, { parentSessionID, name: asName });
+}
+
+/**
+ * Check if a tool callID has a pending result capture (without consuming).
+ */
+export function getPendingResultCaptureByCallID(
+  callID: string
+): { parentSessionID: string; name: string } | undefined {
+  return pendingResultCaptureByCallID.get(callID);
+}
+
+/**
+ * Consume a pending result capture by tool callID.
+ */
+export function consumePendingResultCaptureByCallID(
+  callID: string
+): { parentSessionID: string; name: string } | undefined {
+  const entry = pendingResultCaptureByCallID.get(callID);
+  if (entry) {
+    pendingResultCaptureByCallID.delete(callID);
+  }
+  return entry;
+}
+
+/**
  * Register a pending result capture by prompt content.
  * Called when spawning a subtask with `as:` name (before we know the session ID).
  * NOTE: We keep this until session.idle matches the prompt, since tool.after
@@ -672,6 +851,27 @@ export function getPendingResultCaptureByPrompt(
  */
 export function deletePendingResultCaptureByPrompt(prompt: string): void {
   pendingResultCaptureByPrompt.delete(prompt);
+}
+
+/**
+ * Drop every pending capture entry for a (parent session, name) pair.
+ * Called once a result has been captured so no stale entry is left behind for
+ * a later invocation that happens to reuse the same prompt text or session.
+ */
+export function clearPendingResultCapturesFor(
+  parentSessionID: string,
+  name: string
+): void {
+  for (const [prompt, entry] of pendingResultCaptureByPrompt) {
+    if (entry.parentSessionID === parentSessionID && entry.name === name) {
+      pendingResultCaptureByPrompt.delete(prompt);
+    }
+  }
+  for (const [subtaskSessionID, entry] of pendingResultCapture) {
+    if (entry.parentSessionID === parentSessionID && entry.name === name) {
+      pendingResultCapture.delete(subtaskSessionID);
+    }
+  }
 }
 
 /**

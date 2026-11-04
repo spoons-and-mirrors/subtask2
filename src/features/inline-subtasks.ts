@@ -1,7 +1,12 @@
 import {
   getPluginContext,
+  getClient,
+  createChildSession,
+  promptSession,
   registerPendingParentForPrompt,
   registerPendingResultCaptureByPrompt,
+  setSubtaskParentSession,
+  setReturnState,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { hasTurnReferences, parseParallelItem } from "../parsing";
@@ -14,6 +19,77 @@ import { flattenParallels } from "./parallel";
  * Feature: Inline subtask execution
  * Executes /subtask {...} inline subtasks without command files in V2
  */
+
+/**
+ * Build a V1-style subtask part for inline subtask syntax.
+ * Used by the V1 command hook to replace output.parts.
+ */
+export async function buildInlineSubtaskPart(
+  parsed: {
+    prompt: string;
+    overrides: CommandOverrides;
+  },
+  sessionID: string
+): Promise<any> {
+  let prompt = parsed.prompt;
+
+  if (hasTurnReferences(prompt)) {
+    prompt = await resolveTurnReferences(prompt, sessionID);
+  }
+
+  let model: { providerID: string; modelID: string } | undefined;
+  if (parsed.overrides.model?.includes("/")) {
+    const [providerID, ...rest] = parsed.overrides.model.split("/");
+    model = { providerID, modelID: rest.join("/") };
+  }
+
+  log(
+    `buildInlineSubtaskPart: prompt="${prompt.substring(0, 50)}...", model=${
+      parsed.overrides.model
+    }, agent=${parsed.overrides.agent}`
+  );
+
+  if (parsed.overrides.loop) {
+    startLoop(
+      sessionID,
+      parsed.overrides.loop,
+      "_inline_subtask_",
+      prompt,
+      parsed.overrides.model,
+      parsed.overrides.agent,
+      parsed.overrides.return
+    );
+    log(
+      `buildInlineSubtaskPart: started loop for "${parsed.overrides.loop.until}" max=${parsed.overrides.loop.max}`
+    );
+  } else if (parsed.overrides.return?.length) {
+    setReturnState(sessionID, [...parsed.overrides.return]);
+    log(
+      `buildInlineSubtaskPart: registered return chain of ${parsed.overrides.return.length} prompts for parent ${sessionID}`
+    );
+  }
+
+  registerPendingParentForPrompt(prompt, sessionID);
+
+  if (parsed.overrides.as) {
+    registerPendingResultCaptureByPrompt(
+      prompt,
+      sessionID,
+      parsed.overrides.as
+    );
+    log(
+      `buildInlineSubtaskPart: registered result capture as "${parsed.overrides.as}"`
+    );
+  }
+
+  return {
+    type: "subtask",
+    agent: parsed.overrides.agent || "build",
+    model,
+    description: "Inline subtask",
+    prompt,
+  };
+}
 
 export async function executeInlineSubtask(
   parsed: {
@@ -59,9 +135,18 @@ export async function executeInlineSubtask(
   }
 
   const ctx = getPluginContext();
-  if (!ctx) {
-    log(`executeInlineSubtask ERROR: no plugin context available`);
+  const client = getClient();
+  if (!ctx?.session?.create && !client?.session?.create) {
+    log(`executeInlineSubtask ERROR: no plugin context or client available`);
     return;
+  }
+
+  // Save return state to parent session if return is present without loop
+  if (!parsed.overrides.loop && parsed.overrides.return?.length) {
+    setReturnState(sessionID, [...parsed.overrides.return]);
+    log(
+      `executeInlineSubtask: registered return chain of ${parsed.overrides.return.length} prompts for parent ${sessionID}`
+    );
   }
 
   // Register parent session for $TURN resolution
@@ -82,18 +167,19 @@ export async function executeInlineSubtask(
   try {
     const title = prompt.length > 50 ? prompt.substring(0, 47) + "..." : prompt;
     log(`executeInlineSubtask: creating child session for parent ${sessionID}...`);
-    const child = await ctx.session.create({
-      parentID: sessionID as any,
+    const child = await createChildSession({
+      parentID: sessionID,
       title,
       agent: (parsed.overrides.agent as any) || "build",
       model: model as any,
     });
 
     log(`executeInlineSubtask: child session created: ${child.id}, sending prompt...`);
-    await ctx.session.prompt({
-      sessionID: child.id,
-      text: prompt,
-    });
+    if (parsed.overrides.loop || parsed.overrides.return?.length) {
+      setSubtaskParentSession(child.id, sessionID);
+      log(`executeInlineSubtask: mapped child ${child.id} -> parent ${sessionID}`);
+    }
+    await promptSession(child.id, prompt);
 
     // Handle parallel subtasks if specified
     if (parsed.overrides.parallel?.length) {
@@ -112,8 +198,8 @@ export async function executeInlineSubtask(
           if (pp.model) {
             pModel = { providerID: pp.model.providerID, id: pp.model.modelID };
           }
-          const pChild = await ctx.session.create({
-            parentID: sessionID as any,
+          const pChild = await createChildSession({
+            parentID: sessionID,
             title: pp.description || "Parallel subtask",
             agent: (pp.agent as any) || "build",
             model: pModel as any,
@@ -121,10 +207,7 @@ export async function executeInlineSubtask(
           if (pp.as) {
             registerPendingResultCaptureByPrompt(pp.prompt, sessionID, pp.as);
           }
-          await ctx.session.prompt({
-            sessionID: pChild.id,
-            text: pp.prompt,
-          });
+          await promptSession(pChild.id, pp.prompt);
         }
         log(
           `executeInlineSubtask: spawned ${parallelParts.length} parallel subtasks`

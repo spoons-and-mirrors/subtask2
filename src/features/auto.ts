@@ -1,7 +1,10 @@
 import {
   getPluginContext,
+  getClient,
   registerPendingParentForPrompt,
   setReturnState,
+  createChildSession,
+  promptSession,
 } from "../core/state";
 import { log } from "../utils/logger";
 import { getAutoWorkflowPrompt } from "../utils/prompts";
@@ -20,8 +23,9 @@ export async function executeAutoWorkflow(
   model?: { providerID: string; modelID: string }
 ): Promise<void> {
   const ctx = getPluginContext();
-  if (!ctx) {
-    log(`executeAutoWorkflow ERROR: no plugin context available`);
+  const client = getClient();
+  if (!ctx && !client) {
+    log(`executeAutoWorkflow ERROR: no plugin context or client available`);
     return;
   }
 
@@ -45,16 +49,15 @@ export async function executeAutoWorkflow(
     if (model) {
       m = { providerID: model.providerID, id: model.modelID };
     }
-    const child = await ctx.session.create({
-      parentID: sessionID as any,
-      title: "Auto workflow generation",
-      agent: (agent as any) || "build",
-      model: m as any,
-    });
-    await ctx.session.prompt({
-      sessionID: child.id,
-      text: prompt,
-    });
+    if (ctx?.session?.create || client?.session?.create) {
+      const child = await createChildSession({
+        parentID: sessionID,
+        title: "Auto workflow generation",
+        agent: (agent as any) || "build",
+        model: m as any,
+      });
+      await promptSession(child.id, prompt);
+    }
   } catch (e) {
     log(`executeAutoWorkflow FAILED:`, e);
   }
