@@ -34,7 +34,7 @@ export function resolveResultReferences(
   // Reset again after test()
   RESULT_PATTERN.lastIndex = 0;
 
-  return text.replace(RESULT_PATTERN, (match, name) => {
+  return text.replace(RESULT_PATTERN, (_match, name) => {
     const result = results?.get(name);
     if (result) {
       log(

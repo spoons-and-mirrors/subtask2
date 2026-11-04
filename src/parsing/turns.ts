@@ -4,8 +4,6 @@
 
 // $TURN[n] - last n messages
 // $TURN[:n] or $TURN[:n:m:o] - specific messages at indices (1-based from end)
-const TURN_LAST_N_PATTERN = "\\$TURN\\[(\\d+)\\]";
-const TURN_SPECIFIC_PATTERN = "\\$TURN\\[([:\\d]+)\\]";
 
 export type TurnReference =
   | { type: "lastN"; match: string; count: number }

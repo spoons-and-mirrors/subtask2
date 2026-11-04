@@ -1,67 +1,37 @@
-import * as fs from "fs";
-import * as path from "path";
+import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "fs";
 
-const LOG_DIR = path.join(process.cwd(), ".logs");
-const LOG_FILE = path.join(LOG_DIR, "subtask2.log");
-const WRITE_INTERVAL_MS = 100;
+const LOG_DIR = `${process.env.HOME}/.config/opencode/plugin/subtask2/logs`;
+const LOG_FILE = `${LOG_DIR}/debug.log`;
 
-let logBuffer: string[] = [];
-let writeScheduled = false;
-let initialized = false;
-
-function ensureInitialized(): boolean {
-  if (initialized) return true;
-
+// Ensure log directory exists immediately on load as tested
+if (!existsSync(LOG_DIR)) {
   try {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-    fs.writeFileSync(LOG_FILE, "");
-    initialized = true;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function formatTimestamp(): string {
-  return new Date().toISOString();
-}
-
-async function flushLogs(): Promise<void> {
-  if (logBuffer.length === 0) {
-    writeScheduled = false;
-    return;
-  }
-
-  const toWrite = logBuffer.join("");
-  logBuffer = [];
-  writeScheduled = false;
-
-  try {
-    await fs.promises.appendFile(LOG_FILE, toWrite);
+    mkdirSync(LOG_DIR, { recursive: true });
   } catch {}
 }
 
-function scheduleFlush(): void {
-  if (!writeScheduled) {
-    writeScheduled = true;
-    setTimeout(flushLogs, WRITE_INTERVAL_MS);
+export function log(...args: unknown[]): void {
+  if (!existsSync(LOG_DIR)) {
+    try {
+      mkdirSync(LOG_DIR, { recursive: true });
+    } catch {}
   }
-}
-
-export function log(...args: unknown[]) {
-  if (!ensureInitialized()) return;
-
-  const timestamp = formatTimestamp();
+  const timestamp = new Date().toISOString();
   const message = args
     .map(a => (typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)))
     .join(" ");
-  logBuffer.push(`[${timestamp}] ${message}\n`);
-  scheduleFlush();
+  try {
+    appendFileSync(LOG_FILE, `[${timestamp}] ${message}\n`);
+  } catch {}
 }
 
-export function clearLog() {
-  if (!ensureInitialized()) return;
-  fs.writeFileSync(LOG_FILE, "");
+export function clearLog(): void {
+  if (!existsSync(LOG_DIR)) {
+    try {
+      mkdirSync(LOG_DIR, { recursive: true });
+    } catch {}
+  }
+  try {
+    writeFileSync(LOG_FILE, "");
+  } catch {}
 }

@@ -39,3 +39,27 @@ export interface SubtaskPart {
   prompt: string;
   as?: string; // Named result identifier for $RESULT[name] references
 }
+
+export interface SessionPromptEvent {
+  readonly sessionID: string;
+  prompt: {
+    text: string;
+    files?: unknown[];
+    agents?: unknown[];
+    skills?: unknown[];
+  };
+  metadata?: Record<string, unknown>;
+  delivery?: string;
+}
+
+export interface SessionContextEvent {
+  readonly sessionID: string;
+  messages: Array<{
+    role: string;
+    content: Array<{ type: string; text?: string; [key: string]: any }>;
+    [key: string]: any;
+  }>;
+  system: Array<{ type: string; text: string }>;
+  [key: string]: any;
+}
+

@@ -70,6 +70,9 @@ import {
   storeSubtaskResult,
   resolveResultReferences,
   clearSubtaskResults,
+  promptSession,
+  getSessionMessages,
+  setPluginContext,
   OPENCODE_GENERIC,
 } from "../../src/core/state";
 
@@ -779,6 +782,98 @@ describe("state management", () => {
     it("contains expected text", () => {
       expect(OPENCODE_GENERIC).toContain("Summarize");
       expect(OPENCODE_GENERIC).toContain("task");
+    });
+  });
+
+  describe("promptSession and getSessionMessages helpers", () => {
+    it("works with V2 pluginContext", async () => {
+      const mockCtx: any = {
+        session: {
+          prompt: async (args: any) => ({ prompted: true, ...args }),
+          context: async (args: any) => [{ role: "assistant", text: "V2 context" }],
+        },
+      };
+      setPluginContext(mockCtx);
+      setClient(null);
+
+      const promptRes = await promptSession("s-v2", "hello v2");
+      expect(promptRes).toEqual({ prompted: true, sessionID: "s-v2", text: "hello v2" });
+
+      const msgs = await getSessionMessages("s-v2");
+      expect(msgs).toEqual([{ role: "assistant", text: "V2 context" }]);
+    });
+
+    it("works with V1 client", async () => {
+      setPluginContext(null as any);
+      const calls: any[] = [];
+      const mockClient: any = {
+        session: {
+          prompt: async (args: any) => {
+            calls.push(args);
+            return { promptedV1: true, ...args };
+          },
+          messages: async (args: any) => ({ data: [{ role: "assistant", text: "V1 msg" }] }),
+        },
+      };
+      setClient(mockClient);
+
+      const promptRes = await promptSession("s-v1", "hello v1");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual({
+        path: { id: "s-v1" },
+        body: { parts: [{ type: "text", text: "hello v1" }] },
+      });
+      expect(promptRes).toEqual({
+        promptedV1: true,
+        path: { id: "s-v1" },
+        body: { parts: [{ type: "text", text: "hello v1" }] },
+      });
+
+      const msgs = await getSessionMessages("s-v1");
+      expect(msgs).toEqual([{ role: "assistant", text: "V1 msg" }]);
+    });
+
+    it("createChildSession and runSessionCommand adapt to V1 client contracts", async () => {
+      setPluginContext(null as any);
+      const createCalls: any[] = [];
+      const commandCalls: any[] = [];
+      const mockClient: any = {
+        session: {
+          create: async (args: any) => {
+            createCalls.push(args);
+            return { data: { id: "child-v1-id", title: args.body.title } };
+          },
+          command: async (args: any) => {
+            commandCalls.push(args);
+            return { ok: true, ...args };
+          },
+        },
+      };
+      setClient(mockClient);
+
+      const { createChildSession, runSessionCommand } = await import("../../src/core/state");
+
+      const child = await createChildSession({
+        parentID: "p-1",
+        title: "Test Child",
+      });
+      expect(createCalls).toHaveLength(1);
+      expect(createCalls[0]).toEqual({
+        body: { parentID: "p-1", title: "Test Child" },
+      });
+      expect(child.id).toBe("child-v1-id");
+
+      const cmdRes = await runSessionCommand({
+        sessionID: "s-cmd",
+        command: "review",
+        arguments: "arg1 arg2",
+      });
+      expect(commandCalls).toHaveLength(1);
+      expect(commandCalls[0]).toEqual({
+        path: { id: "s-cmd" },
+        body: { command: "review", arguments: "arg1 arg2" },
+      });
+      expect(cmdRes.ok).toBe(true);
     });
   });
 });
